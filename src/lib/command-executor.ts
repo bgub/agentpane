@@ -17,6 +17,7 @@ export class CommandExecutor extends Context.Tag("@acapa/CommandExecutor")<
       command: string,
       cwd: string
     ) => Effect.Effect<ReadableStream<Uint8Array>>
+    readonly runningSessionIds: () => ReadonlySet<string>
   }
 >() {
   static readonly layer = Layer.effect(
@@ -27,10 +28,12 @@ export class CommandExecutor extends Context.Tag("@acapa/CommandExecutor")<
       const runPromise = Runtime.runPromise(runtime)
 
       const CWD_MARKER = "__ACAPA_CWD_9f3a__"
+      const runningSessions = new Set<string>()
 
       const exec = Effect.fn("CommandExecutor.exec")(
         function* (sessionId: string, command: string, cwd: string) {
           yield* repo.addEntry(sessionId, "command", `$ ${command}`).pipe(Effect.orDie)
+          runningSessions.add(sessionId)
 
           const effectiveCwd = cwd === "~" ? process.env.HOME || "/" : cwd
           const fullCommand = `${command}\n__acapa_exit=$?\necho "${CWD_MARKER}$(pwd)"\nexit $__acapa_exit`
@@ -80,6 +83,7 @@ export class CommandExecutor extends Context.Tag("@acapa/CommandExecutor")<
                 })
 
                 proc.on("close", (code: number | null) => {
+                  runningSessions.delete(sessionId)
                   const outputText = stdoutChunks.join("")
                   const trimmed = outputText.replace(/\n$/, "")
                   if (trimmed) {
@@ -105,6 +109,7 @@ export class CommandExecutor extends Context.Tag("@acapa/CommandExecutor")<
                 })
 
                 proc.on("error", (err: Error) => {
+                  runningSessions.delete(sessionId)
                   emit.single({ type: "error", data: err.message })
                   runPromise(
                     repo.addEntry(sessionId, "error", err.message)
@@ -116,6 +121,7 @@ export class CommandExecutor extends Context.Tag("@acapa/CommandExecutor")<
               }),
               (proc) =>
                 Effect.sync(() => {
+                  runningSessions.delete(sessionId)
                   if (!proc.killed) proc.kill()
                 })
             )
@@ -129,7 +135,10 @@ export class CommandExecutor extends Context.Tag("@acapa/CommandExecutor")<
         }
       )
 
-      return CommandExecutor.of({ exec })
+      return CommandExecutor.of({
+        exec,
+        runningSessionIds: () => runningSessions as ReadonlySet<string>,
+      })
     })
   )
 }
