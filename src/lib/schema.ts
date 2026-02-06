@@ -1,4 +1,4 @@
-import * as Schema from "effect/Schema"
+import { Schema } from "effect"
 
 export class Session extends Schema.Class<Session>("Session")({
   id: Schema.String,
@@ -14,3 +14,10 @@ export class Entry extends Schema.Class<Entry>("Entry")({
   content: Schema.String,
   created_at: Schema.Number,
 }) {}
+
+export class SessionNotFoundError extends Schema.TaggedError<SessionNotFoundError>()(
+  "SessionNotFoundError",
+  {
+    id: Schema.String,
+  }
+) {}

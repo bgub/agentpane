@@ -1,8 +1,5 @@
 import { spawn } from "node:child_process"
-import * as Context from "effect/Context"
-import * as Effect from "effect/Effect"
-import * as Layer from "effect/Layer"
-import * as Stream from "effect/Stream"
+import { Context, Effect, Layer, Runtime, Stream } from "effect"
 import { SessionRepo } from "./session-repo"
 
 type OutputEvent =
@@ -11,28 +8,28 @@ type OutputEvent =
   | { readonly type: "exit"; readonly code: number }
   | { readonly type: "error"; readonly data: string }
 
-export interface CommandExecutor {
-  readonly exec: (
-    sessionId: string,
-    command: string,
-    cwd: string
-  ) => Effect.Effect<ReadableStream<Uint8Array>, Error>
-}
-
-export const CommandExecutor =
-  Context.GenericTag<CommandExecutor>("CommandExecutor")
-
-const CWD_MARKER = "__ACAPA_CWD_9f3a__"
-
-export const CommandExecutorLive = Layer.effect(
+export class CommandExecutor extends Context.Tag("@acapa/CommandExecutor")<
   CommandExecutor,
-  Effect.gen(function* () {
-    const repo = yield* SessionRepo
+  {
+    readonly exec: (
+      sessionId: string,
+      command: string,
+      cwd: string
+    ) => Effect.Effect<ReadableStream<Uint8Array>>
+  }
+>() {
+  static readonly layer = Layer.effect(
+    CommandExecutor,
+    Effect.gen(function* () {
+      const repo = yield* SessionRepo
+      const runtime = yield* Effect.runtime<never>()
+      const runPromise = Runtime.runPromise(runtime)
 
-    return CommandExecutor.of({
-      exec: (sessionId, command, cwd) =>
-        Effect.gen(function* () {
-          yield* repo.addEntry(sessionId, "command", `$ ${command}`)
+      const CWD_MARKER = "__ACAPA_CWD_9f3a__"
+
+      const exec = Effect.fn("CommandExecutor.exec")(
+        function* (sessionId: string, command: string, cwd: string) {
+          yield* repo.addEntry(sessionId, "command", `$ ${command}`).pipe(Effect.orDie)
 
           const effectiveCwd = cwd === "~" ? process.env.HOME || "/" : cwd
           const fullCommand = `${command}\n__acapa_exit=$?\necho "${CWD_MARKER}$(pwd)"\nexit $__acapa_exit`
@@ -68,7 +65,7 @@ export const CommandExecutorLive = Layer.effect(
                 proc.stderr.on("data", (data: Buffer) => {
                   const text = data.toString()
                   emit.single({ type: "stderr", data: text })
-                  Effect.runPromise(
+                  runPromise(
                     repo.addEntry(sessionId, "stderr", text.replace(/\n$/, ""))
                   ).catch(() => {})
                 })
@@ -83,7 +80,7 @@ export const CommandExecutorLive = Layer.effect(
                       .trim()
                     if (afterMarker.startsWith("/")) {
                       const newCwd = afterMarker.split("\n")[0].trim()
-                      Effect.runPromise(
+                      runPromise(
                         repo.updateCwd(sessionId, newCwd)
                       ).catch(() => {})
                     }
@@ -91,14 +88,14 @@ export const CommandExecutorLive = Layer.effect(
 
                   const trimmed = outputText.replace(/\n$/, "")
                   if (trimmed) {
-                    Effect.runPromise(
+                    runPromise(
                       repo.addEntry(sessionId, "stdout", trimmed)
                     ).catch(() => {})
                   }
 
                   emit.single({ type: "exit", code: code ?? 1 })
                   if (code !== 0 && code !== null) {
-                    Effect.runPromise(
+                    runPromise(
                       repo.addEntry(sessionId, "info", `exit code: ${code}`)
                     ).catch(() => {})
                   }
@@ -107,7 +104,7 @@ export const CommandExecutorLive = Layer.effect(
 
                 proc.on("error", (err: Error) => {
                   emit.single({ type: "error", data: err.message })
-                  Effect.runPromise(
+                  runPromise(
                     repo.addEntry(sessionId, "error", err.message)
                   ).catch(() => {})
                   emit.end()
@@ -127,7 +124,10 @@ export const CommandExecutorLive = Layer.effect(
             Stream.encodeText,
             Stream.toReadableStream()
           )
-        }),
+        }
+      )
+
+      return CommandExecutor.of({ exec })
     })
-  })
-)
+  )
+}

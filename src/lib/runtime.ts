@@ -1,11 +1,10 @@
-import * as Layer from "effect/Layer"
-import * as ManagedRuntime from "effect/ManagedRuntime"
+import { Layer, ManagedRuntime } from "effect"
 import { SqliteLive } from "./db"
-import { SessionRepoLive } from "./session-repo"
-import { CommandExecutorLive } from "./command-executor"
+import { SessionRepo } from "./session-repo"
+import { CommandExecutor } from "./command-executor"
 
-const AppLayer = CommandExecutorLive.pipe(
-  Layer.provideMerge(SessionRepoLive),
+const AppLayer = CommandExecutor.layer.pipe(
+  Layer.provideMerge(SessionRepo.layer),
   Layer.provideMerge(SqliteLive)
 )
 

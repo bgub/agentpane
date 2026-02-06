@@ -1,24 +1,25 @@
 import { AppRuntime } from "@/lib/runtime"
 import { SessionRepo } from "@/lib/session-repo"
-import * as Effect from "effect/Effect"
-import { NextRequest } from "next/server"
+import { Effect, Exit } from "effect"
+import type { NextRequest } from "next/server"
 
 export async function GET(
   _request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params
-  try {
-    const session = await AppRuntime.runPromise(
-      Effect.gen(function* () {
-        const repo = yield* SessionRepo
-        return yield* repo.get(id)
-      })
-    )
-    return Response.json(session)
-  } catch {
-    return Response.json({ error: "Session not found" }, { status: 404 })
-  }
+  const exit = await AppRuntime.runPromiseExit(
+    Effect.flatMap(SessionRepo, (repo) => repo.get(id))
+  )
+  return Exit.match(exit, {
+    onFailure: (cause) => {
+      const error = cause._tag === "Fail" && cause.error._tag === "SessionNotFoundError"
+        ? { error: "Session not found" }
+        : { error: "Internal error" }
+      return Response.json(error, { status: 404 })
+    },
+    onSuccess: (session) => Response.json(session),
+  })
 }
 
 export async function PATCH(
@@ -27,17 +28,13 @@ export async function PATCH(
 ) {
   const { id } = await params
   const body = await request.json()
-  try {
-    const session = await AppRuntime.runPromise(
-      Effect.gen(function* () {
-        const repo = yield* SessionRepo
-        return yield* repo.rename(id, body.name)
-      })
-    )
-    return Response.json(session)
-  } catch {
-    return Response.json({ error: "Session not found" }, { status: 404 })
-  }
+  const exit = await AppRuntime.runPromiseExit(
+    Effect.flatMap(SessionRepo, (repo) => repo.rename(id, body.name))
+  )
+  return Exit.match(exit, {
+    onFailure: () => Response.json({ error: "Session not found" }, { status: 404 }),
+    onSuccess: (session) => Response.json(session),
+  })
 }
 
 export async function DELETE(
@@ -46,10 +43,7 @@ export async function DELETE(
 ) {
   const { id } = await params
   await AppRuntime.runPromise(
-    Effect.gen(function* () {
-      const repo = yield* SessionRepo
-      return yield* repo.remove(id)
-    })
+    Effect.flatMap(SessionRepo, (repo) => repo.remove(id))
   )
   return new Response(null, { status: 204 })
 }

@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useRef, useEffect, useCallback, KeyboardEvent } from "react"
+import { useState, useRef, useEffect, useCallback, type KeyboardEvent } from "react"
 
 interface OutputLine {
   id: number

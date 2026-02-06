@@ -1,7 +1,6 @@
 import * as SqliteNode from "@effect/sql-sqlite-node/SqliteClient"
 import { SqlClient } from "@effect/sql/SqlClient"
-import * as Effect from "effect/Effect"
-import * as Layer from "effect/Layer"
+import { Effect, Layer } from "effect"
 import fs from "node:fs"
 import path from "node:path"
 
