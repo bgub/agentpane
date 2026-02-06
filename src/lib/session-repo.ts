@@ -84,7 +84,8 @@ export class SessionRepo extends Context.Tag("@acapa/SessionRepo")<
       )
 
       const getEntries = Effect.fn("SessionRepo.getEntries")(function* (sessionId: string) {
-        return yield* sql<Entry>`SELECT id, session_id, type, content, created_at FROM entries WHERE session_id = ${sessionId} ORDER BY id`
+        const rows = yield* sql<Entry>`SELECT id, session_id, type, content, created_at FROM entries WHERE session_id = ${sessionId} ORDER BY id DESC LIMIT 2000`
+        return rows.slice().reverse()
       })
 
       return SessionRepo.of({

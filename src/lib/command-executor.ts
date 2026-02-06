@@ -7,6 +7,7 @@ type OutputEvent =
   | { readonly type: "stderr"; readonly data: string }
   | { readonly type: "exit"; readonly code: number }
   | { readonly type: "error"; readonly data: string }
+  | { readonly type: "cwd"; readonly data: string }
 
 export class CommandExecutor extends Context.Tag("@acapa/CommandExecutor")<
   CommandExecutor,
@@ -34,7 +35,9 @@ export class CommandExecutor extends Context.Tag("@acapa/CommandExecutor")<
           const effectiveCwd = cwd === "~" ? process.env.HOME || "/" : cwd
           const fullCommand = `${command}\n__acapa_exit=$?\necho "${CWD_MARKER}$(pwd)"\nexit $__acapa_exit`
 
-          let stdoutAccum = ""
+          const stdoutChunks: string[] = []
+          let markerFound = false
+          let extractedCwd: string | null = null
 
           const eventStream = Stream.asyncPush<OutputEvent>((emit) =>
             Effect.acquireRelease(
@@ -46,18 +49,24 @@ export class CommandExecutor extends Context.Tag("@acapa/CommandExecutor")<
 
                 proc.stdout.on("data", (data: Buffer) => {
                   const text = data.toString()
-                  stdoutAccum += text
-
-                  const markerIdx = stdoutAccum.indexOf(CWD_MARKER)
+                  const markerIdx = text.indexOf(CWD_MARKER)
                   if (markerIdx === -1) {
-                    emit.single({ type: "stdout", data: text })
+                    if (!markerFound) {
+                      stdoutChunks.push(text)
+                      emit.single({ type: "stdout", data: text })
+                    }
                   } else {
-                    const beforeMarker = text.substring(
-                      0,
-                      text.indexOf(CWD_MARKER)
-                    )
+                    markerFound = true
+                    const beforeMarker = text.substring(0, markerIdx)
                     if (beforeMarker) {
+                      stdoutChunks.push(beforeMarker)
                       emit.single({ type: "stdout", data: beforeMarker })
+                    }
+                    const afterMarker = text
+                      .substring(markerIdx + CWD_MARKER.length)
+                      .trim()
+                    if (afterMarker.startsWith("/")) {
+                      extractedCwd = afterMarker.split("\n")[0].trim()
                     }
                   }
                 })
@@ -67,37 +76,30 @@ export class CommandExecutor extends Context.Tag("@acapa/CommandExecutor")<
                   emit.single({ type: "stderr", data: text })
                   runPromise(
                     repo.addEntry(sessionId, "stderr", text.replace(/\n$/, ""))
-                  ).catch(() => {})
+                  ).catch((err) => console.error("[acapa] DB write failed:", err))
                 })
 
                 proc.on("close", (code: number | null) => {
-                  const markerIdx = stdoutAccum.indexOf(CWD_MARKER)
-                  let outputText = stdoutAccum
-                  if (markerIdx !== -1) {
-                    outputText = stdoutAccum.substring(0, markerIdx)
-                    const afterMarker = stdoutAccum
-                      .substring(markerIdx + CWD_MARKER.length)
-                      .trim()
-                    if (afterMarker.startsWith("/")) {
-                      const newCwd = afterMarker.split("\n")[0].trim()
-                      runPromise(
-                        repo.updateCwd(sessionId, newCwd)
-                      ).catch(() => {})
-                    }
-                  }
-
+                  const outputText = stdoutChunks.join("")
                   const trimmed = outputText.replace(/\n$/, "")
                   if (trimmed) {
                     runPromise(
                       repo.addEntry(sessionId, "stdout", trimmed)
-                    ).catch(() => {})
+                    ).catch((err) => console.error("[acapa] DB write failed:", err))
+                  }
+
+                  if (extractedCwd) {
+                    runPromise(
+                      repo.updateCwd(sessionId, extractedCwd)
+                    ).catch((err) => console.error("[acapa] DB write failed:", err))
+                    emit.single({ type: "cwd", data: extractedCwd })
                   }
 
                   emit.single({ type: "exit", code: code ?? 1 })
                   if (code !== 0 && code !== null) {
                     runPromise(
                       repo.addEntry(sessionId, "info", `exit code: ${code}`)
-                    ).catch(() => {})
+                    ).catch((err) => console.error("[acapa] DB write failed:", err))
                   }
                   emit.end()
                 })
@@ -106,7 +108,7 @@ export class CommandExecutor extends Context.Tag("@acapa/CommandExecutor")<
                   emit.single({ type: "error", data: err.message })
                   runPromise(
                     repo.addEntry(sessionId, "error", err.message)
-                  ).catch(() => {})
+                  ).catch((err) => console.error("[acapa] DB write failed:", err))
                   emit.end()
                 })
 

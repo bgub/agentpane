@@ -12,6 +12,7 @@ if (!fs.existsSync(dataDir)) {
 const migrations = Effect.gen(function* () {
   const sql = yield* SqlClient
   yield* sql`PRAGMA journal_mode = WAL`
+  yield* sql`PRAGMA busy_timeout = 5000`
   yield* sql`PRAGMA foreign_keys = ON`
   yield* sql`
     CREATE TABLE IF NOT EXISTS sessions (

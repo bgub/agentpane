@@ -1,6 +1,7 @@
 "use client"
 
 import { useState, useRef, useEffect, useCallback, type KeyboardEvent } from "react"
+import { ScrollArea } from "@/components/ui/scroll-area"
 
 interface OutputLine {
   id: number
@@ -12,9 +13,12 @@ interface TerminalProps {
   sessionId: string
   cwd: string
   onCwdChange?: (cwd: string) => void
+  onRunningChange?: (running: boolean) => void
 }
 
-export default function Terminal({ sessionId, cwd, onCwdChange }: TerminalProps) {
+const MAX_OUTPUT_LINES = 5000
+
+export default function Terminal({ sessionId, cwd, onCwdChange, onRunningChange }: TerminalProps) {
   const [input, setInput] = useState("")
   const [output, setOutput] = useState<OutputLine[]>([])
   const [running, setRunning] = useState(false)
@@ -22,24 +26,73 @@ export default function Terminal({ sessionId, cwd, onCwdChange }: TerminalProps)
   const [historyIndex, setHistoryIndex] = useState(-1)
   const [loaded, setLoaded] = useState(false)
 
-  const outputRef = useRef<HTMLDivElement>(null)
+  const bottomRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
   const nextId = useRef(1)
   const currentSessionId = useRef(sessionId)
+  const abortRef = useRef<AbortController | null>(null)
+
+  // Batched line buffer + rAF flush
+  const pendingLines = useRef<OutputLine[]>([])
+  const rafHandle = useRef<number | null>(null)
 
   const scrollToBottom = useCallback(() => {
-    if (outputRef.current) {
-      outputRef.current.scrollTop = outputRef.current.scrollHeight
+    bottomRef.current?.scrollIntoView({ block: "end" })
+  }, [])
+
+  const flushPendingLines = useCallback(() => {
+    rafHandle.current = null
+    const lines = pendingLines.current
+    if (lines.length === 0) return
+    pendingLines.current = []
+    setOutput((prev) => {
+      const combined = prev.concat(lines)
+      if (combined.length > MAX_OUTPUT_LINES) {
+        const trimCount = combined.length - MAX_OUTPUT_LINES
+        const truncatedLine: OutputLine = {
+          id: 0,
+          type: "info",
+          text: `--- ${trimCount} lines truncated ---`,
+        }
+        return [truncatedLine, ...combined.slice(trimCount)]
+      }
+      return combined
+    })
+    scrollToBottom()
+  }, [scrollToBottom])
+
+  const addLine = useCallback((type: OutputLine["type"], text: string) => {
+    pendingLines.current.push({ id: nextId.current++, type, text })
+    if (rafHandle.current === null) {
+      rafHandle.current = requestAnimationFrame(flushPendingLines)
+    }
+  }, [flushPendingLines])
+
+  // Cleanup rAF on unmount
+  useEffect(() => {
+    return () => {
+      if (rafHandle.current !== null) {
+        cancelAnimationFrame(rafHandle.current)
+      }
     }
   }, [])
 
   useEffect(() => {
-    scrollToBottom()
-  }, [output, scrollToBottom])
-
-  useEffect(() => {
     inputRef.current?.focus()
   }, [sessionId])
+
+  // Always capture keyboard input — refocus on any keypress
+  useEffect(() => {
+    const handler = (e: globalThis.KeyboardEvent) => {
+      const el = document.activeElement
+      if (el && el !== inputRef.current && (el.tagName === "INPUT" || el.tagName === "TEXTAREA")) return
+      if (e.metaKey || e.altKey) return
+      if (e.ctrlKey && e.key !== "v") return
+      inputRef.current?.focus()
+    }
+    document.addEventListener("keydown", handler)
+    return () => document.removeEventListener("keydown", handler)
+  }, [])
 
   // Load history when sessionId changes
   useEffect(() => {
@@ -50,6 +103,11 @@ export default function Terminal({ sessionId, cwd, onCwdChange }: TerminalProps)
     setInput("")
     setLoaded(false)
     nextId.current = 1
+    pendingLines.current = []
+    if (rafHandle.current !== null) {
+      cancelAnimationFrame(rafHandle.current)
+      rafHandle.current = null
+    }
 
     fetch(`/api/sessions/${sessionId}/history`)
       .then((res) => res.json())
@@ -67,15 +125,40 @@ export default function Terminal({ sessionId, cwd, onCwdChange }: TerminalProps)
         setOutput(lines)
         setHistory(cmds)
         setLoaded(true)
+        // Scroll to bottom after history loads
+        requestAnimationFrame(() => {
+          bottomRef.current?.scrollIntoView({ block: "end" })
+        })
       })
       .catch(() => {
         setLoaded(true)
       })
   }, [sessionId])
 
-  const addLine = useCallback((type: OutputLine["type"], text: string) => {
-    setOutput((prev) => [...prev, { id: nextId.current++, type, text }])
-  }, [])
+  const killProcess = useCallback(() => {
+    if (abortRef.current) {
+      abortRef.current.abort()
+      addLine("info", "^C")
+    }
+  }, [addLine])
+
+  // Notify parent of running state changes
+  useEffect(() => {
+    onRunningChange?.(running)
+  }, [running, onRunningChange])
+
+  // Ctrl+C to kill running process
+  useEffect(() => {
+    if (!running) return
+    const handler = (e: globalThis.KeyboardEvent) => {
+      if (e.key === "c" && e.ctrlKey) {
+        e.preventDefault()
+        killProcess()
+      }
+    }
+    document.addEventListener("keydown", handler)
+    return () => document.removeEventListener("keydown", handler)
+  }, [running, killProcess])
 
   const runCommand = useCallback(
     async (cmd: string) => {
@@ -88,11 +171,15 @@ export default function Terminal({ sessionId, cwd, onCwdChange }: TerminalProps)
       setRunning(true)
       setInput("")
 
+      const controller = new AbortController()
+      abortRef.current = controller
+
       try {
         const res = await fetch(`/api/sessions/${sessionId}/exec`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ command: trimmed }),
+          signal: controller.signal,
         })
 
         const reader = res.body?.getReader()
@@ -123,6 +210,8 @@ export default function Terminal({ sessionId, cwd, onCwdChange }: TerminalProps)
                 addLine("stderr", msg.data.replace(/\n$/, ""))
               } else if (msg.type === "error") {
                 addLine("error", msg.data)
+              } else if (msg.type === "cwd") {
+                onCwdChange?.(msg.data)
               } else if (msg.type === "exit" && msg.code !== 0) {
                 addLine("info", `exit code: ${msg.code}`)
               }
@@ -131,18 +220,14 @@ export default function Terminal({ sessionId, cwd, onCwdChange }: TerminalProps)
             }
           }
         }
-
-        // After command finishes, fetch updated session to get new cwd
-        const sessionRes = await fetch(`/api/sessions/${sessionId}`)
-        if (sessionRes.ok) {
-          const session = await sessionRes.json()
-          if (session.cwd && onCwdChange) {
-            onCwdChange(session.cwd)
-          }
-        }
       } catch (err) {
-        addLine("error", `Network error: ${err}`)
+        if (err instanceof DOMException && err.name === "AbortError") {
+          // User killed the process — CWD may not have been streamed
+        } else {
+          addLine("error", `Network error: ${err}`)
+        }
       } finally {
+        abortRef.current = null
         setRunning(false)
         inputRef.current?.focus()
       }
@@ -201,16 +286,19 @@ export default function Terminal({ sessionId, cwd, onCwdChange }: TerminalProps)
         <span className="text-zinc-600 text-xs">{cwd}</span>
       </div>
 
-      <div ref={outputRef} className="flex-1 overflow-y-auto p-4 space-y-0.5">
-        {!loaded && (
-          <pre className="text-zinc-600">Loading history...</pre>
-        )}
-        {output.map((line) => (
-          <pre key={line.id} className={`${colorFor(line.type)} whitespace-pre-wrap break-all`}>
-            {line.text}
-          </pre>
-        ))}
-      </div>
+      <ScrollArea className="flex-1">
+        <div className="p-4 space-y-0.5">
+          {!loaded && (
+            <pre className="text-zinc-600">Loading history...</pre>
+          )}
+          {output.map((line) => (
+            <pre key={line.id} className={`${colorFor(line.type)} whitespace-pre-wrap break-all`}>
+              {line.text}
+            </pre>
+          ))}
+          <div ref={bottomRef} />
+        </div>
+      </ScrollArea>
 
       <div className="flex items-center border-t border-zinc-800 px-4 py-2 gap-2">
         <span className="text-green-400 shrink-0">{cwd} $</span>
@@ -222,10 +310,18 @@ export default function Terminal({ sessionId, cwd, onCwdChange }: TerminalProps)
           onKeyDown={handleKeyDown}
           disabled={running}
           className="flex-1 bg-transparent text-zinc-100 outline-none placeholder:text-zinc-700 disabled:opacity-50"
-          placeholder={running ? "running..." : "type a command..."}
+          placeholder={running ? "Ctrl+C to stop" : "type a command..."}
           autoFocus
           spellCheck={false}
         />
+        {running && (
+          <button
+            onClick={killProcess}
+            className="shrink-0 text-xs text-red-400 hover:text-red-300 px-2 py-0.5 border border-zinc-700 rounded"
+          >
+            Stop
+          </button>
+        )}
       </div>
     </div>
   )
