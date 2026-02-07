@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, useRef, useEffect, useCallback, type KeyboardEvent } from "react"
-import { Square } from "lucide-react"
+import { Square, Check, X, Loader2, Terminal, FileText, Search, Brain, Pencil } from "lucide-react"
 
 interface TurnData {
   id: string
@@ -29,35 +29,157 @@ interface ChatViewProps {
   onConnectionChange?: (sessionId: string, connected: boolean) => void
 }
 
-function ToolCallBlock({ block }: { block: BlockData }) {
-  const [expanded, setExpanded] = useState(false)
-  let toolInfo: { toolName?: string; input?: Record<string, unknown> } = {}
-  try {
-    toolInfo = JSON.parse(block.content)
-  } catch { /* ignore */ }
+interface ToolCallState {
+  toolCallId: string
+  title: string
+  kind?: string
+  status?: string
+  rawInput?: unknown
+  rawOutput?: unknown
+}
 
-  const toolName = toolInfo.toolName || block.kind
-  const hasInput = toolInfo.input && Object.keys(toolInfo.input).length > 0
+type StreamingBlock =
+  | { type: "text"; content: string }
+  | { type: "tool_call"; state: ToolCallState }
+
+function kindIcon(kind?: string) {
+  const cls = "size-3.5 shrink-0"
+  switch (kind) {
+    case "execute": return <Terminal className={cls} />
+    case "read": return <FileText className={cls} />
+    case "edit": return <Pencil className={cls} />
+    case "search": return <Search className={cls} />
+    case "think": return <Brain className={cls} />
+    default: return <span className="text-xs shrink-0">&#9670;</span>
+  }
+}
+
+function statusIndicator(status?: string) {
+  if (status === "completed") return <Check className="size-3.5 shrink-0 text-[var(--t-green)]" />
+  if (status === "failed") return <X className="size-3.5 shrink-0 text-[var(--t-red)]" />
+  if (status === "in_progress" || status === "pending") return <Loader2 className="size-3.5 shrink-0 animate-spin text-[var(--t-amber)]" />
+  return null
+}
+
+function formatOutput(raw: unknown): string {
+  if (raw == null) return ""
+  if (typeof raw === "string") return raw
+  return JSON.stringify(raw, null, 2)
+}
+
+function ToolCallBox({ state }: { state: ToolCallState }) {
+  const [expanded, setExpanded] = useState(false)
+  const output = formatOutput(state.rawOutput)
+  const input = formatOutput(state.rawInput)
+  const hasDetails = !!(output || input)
 
   return (
-    <div className="my-1.5">
+    <div className="my-1.5 rounded-md bg-[var(--t-surface)] border border-[var(--t-border)]">
       <button
-        onClick={() => hasInput && setExpanded(!expanded)}
-        className={`flex items-center gap-1.5 text-xs font-mono transition-colors ${hasInput ? "cursor-pointer hover:text-[var(--t-bright)]" : "cursor-default"}`}
-        style={{ color: 'var(--t-blue)' }}
+        onClick={() => hasDetails && setExpanded(!expanded)}
+        className={`flex w-full items-center gap-2 px-3 py-1.5 text-xs font-mono transition-colors ${
+          hasDetails ? "cursor-pointer hover:bg-[var(--t-elevated)]" : "cursor-default"
+        }`}
+        style={{ color: "var(--t-text)" }}
       >
-        <span className="text-[var(--t-dim)]">{expanded ? "▾" : "▸"}</span>
-        <span>{toolName}</span>
+        <span className="text-[var(--t-blue)]">{kindIcon(state.kind)}</span>
+        <span className="flex-1 text-left truncate">{state.title}</span>
+        {statusIndicator(state.status)}
+        {hasDetails && (
+          <span className="text-[var(--t-dim)] text-[10px]">{expanded ? "▾" : "▸"}</span>
+        )}
       </button>
-      {expanded && hasInput && (
-        <pre
-          className="mt-1 ml-4 text-xs leading-relaxed font-mono overflow-x-auto whitespace-pre-wrap text-[var(--t-muted)]"
-        >
-          {JSON.stringify(toolInfo.input, null, 2)}
-        </pre>
+      {expanded && hasDetails && (
+        <div className="border-t border-[var(--t-border)] px-3 py-2 space-y-2">
+          {input && (
+            <pre className="text-xs leading-relaxed font-mono overflow-x-auto whitespace-pre-wrap text-[var(--t-muted)] max-h-40 overflow-y-auto">
+              {input}
+            </pre>
+          )}
+          {output && (
+            <pre className="text-xs leading-relaxed font-mono overflow-x-auto whitespace-pre-wrap text-[var(--t-text)] max-h-60 overflow-y-auto">
+              {output}
+            </pre>
+          )}
+        </div>
       )}
     </div>
   )
+}
+
+/** Parse a persisted tool_call block into ToolCallState */
+function parseToolCallBlock(block: BlockData): ToolCallState {
+  try {
+    const data = JSON.parse(block.content)
+    return {
+      toolCallId: data.toolCallId || block.id,
+      title: data.title || data.toolName || "Tool call",
+      kind: data.kind,
+      status: data.status,
+      rawInput: data.rawInput,
+      rawOutput: data.rawOutput,
+    }
+  } catch {
+    return { toolCallId: block.id, title: block.kind || "Tool call" }
+  }
+}
+
+/**
+ * Merge tool_call_update blocks (and duplicate tool_call blocks) into the
+ * first tool_call block per toolCallId.
+ * Returns blocks with only "text" and "tool_call" kinds, in original order.
+ */
+function mergeToolCallUpdates(blocks: BlockData[]): BlockData[] {
+  // Build a map of toolCallId → merged state, keeping first occurrence
+  const toolCalls = new Map<string, Record<string, unknown>>()
+  const seenIds = new Set<string>()
+
+  // First pass: seed from first tool_call per ID, then merge all subsequent
+  // tool_call and tool_call_update blocks
+  for (const b of blocks) {
+    if (b.kind !== "tool_call" && b.kind !== "tool_call_update") continue
+    try {
+      const data = JSON.parse(b.content)
+      const id = data.toolCallId
+      if (!id) continue
+      const existing = toolCalls.get(id)
+      if (!existing) {
+        toolCalls.set(id, data)
+      } else {
+        if (data.title != null) existing.title = data.title
+        if (data.kind != null) existing.kind = data.kind
+        if (data.status != null) existing.status = data.status
+        if (data.rawInput !== undefined) existing.rawInput = data.rawInput
+        if (data.rawOutput !== undefined) existing.rawOutput = data.rawOutput
+      }
+    } catch { /* ignore */ }
+  }
+
+  // Second pass: keep text blocks and only the FIRST tool_call per ID
+  return blocks
+    .filter((b) => {
+      if (b.kind === "tool_call_update") return false
+      if (b.kind === "tool_call") {
+        try {
+          const data = JSON.parse(b.content)
+          if (data.toolCallId) {
+            if (seenIds.has(data.toolCallId)) return false
+            seenIds.add(data.toolCallId)
+          }
+        } catch { /* ignore */ }
+      }
+      return true
+    })
+    .map((b) => {
+      if (b.kind === "tool_call") {
+        try {
+          const data = JSON.parse(b.content)
+          const merged = data.toolCallId ? toolCalls.get(data.toolCallId) : undefined
+          if (merged) return { ...b, content: JSON.stringify(merged) }
+        } catch { /* ignore */ }
+      }
+      return b
+    })
 }
 
 export default function ChatView({
@@ -69,7 +191,7 @@ export default function ChatView({
   onConnectionChange,
 }: ChatViewProps) {
   const [turns, setTurns] = useState<TurnData[]>([])
-  const [streamingText, setStreamingText] = useState("")
+  const [streamingBlocks, setStreamingBlocks] = useState<StreamingBlock[]>([])
   const [input, setInput] = useState("")
   const [prompting, setPrompting] = useState(false)
   const [loaded, setLoaded] = useState(false)
@@ -78,13 +200,15 @@ export default function ChatView({
   const scrollRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const abortRef = useRef<AbortController | null>(null)
-  const accumulatedRef = useRef("")
+  const blocksRef = useRef<StreamingBlock[]>([])
+
+  const hasStreamingContent = streamingBlocks.length > 0
 
   // Auto-scroll to bottom
   useEffect(() => {
     const el = scrollRef.current
     if (el) el.scrollTop = el.scrollHeight
-  }, [turns, streamingText])
+  }, [turns, streamingBlocks])
 
   // Focus textarea when active
   useEffect(() => {
@@ -142,14 +266,14 @@ export default function ChatView({
       // Ensure agent is connected before prompting
       const connectResult = await ensureConnected()
       if (connectResult !== true) {
-        setStreamingText(`Error: ${connectResult}`)
+        setStreamingBlocks([{ type: "text", content: `Error: ${connectResult}` }])
         return
       }
 
       setInput("")
       setPrompting(true)
-      setStreamingText("")
-      accumulatedRef.current = ""
+      setStreamingBlocks([])
+      blocksRef.current = []
 
       // Add user turn optimistically
       const userTurn: TurnData = {
@@ -183,7 +307,7 @@ export default function ChatView({
 
         if (!res.ok) {
           const err = await res.json().catch(() => ({ error: "Unknown error" }))
-          setStreamingText(`Error: ${err.error}`)
+          setStreamingBlocks([{ type: "text", content: `Error: ${err.error}` }])
           setPrompting(false)
           return
         }
@@ -213,34 +337,110 @@ export default function ChatView({
                 data.sessionUpdate === "agent_message_chunk" &&
                 data.content?.type === "text"
               ) {
-                accumulatedRef.current += data.content.text
-                setStreamingText(accumulatedRef.current)
+                const blocks = blocksRef.current
+                const last = blocks[blocks.length - 1]
+                if (last && last.type === "text") {
+                  last.content += data.content.text
+                } else {
+                  blocks.push({ type: "text", content: data.content.text })
+                }
+                blocksRef.current = blocks
+                setStreamingBlocks([...blocks])
+              } else if (data.sessionUpdate === "tool_call") {
+                const blocks = blocksRef.current
+                const existing = blocks.find(
+                  (b): b is StreamingBlock & { type: "tool_call" } =>
+                    b.type === "tool_call" && b.state.toolCallId === data.toolCallId
+                )
+                if (existing) {
+                  // Merge into existing tool call (agent sent duplicate tool_call event)
+                  if (data.title != null) existing.state.title = data.title
+                  if (data.kind != null) existing.state.kind = data.kind
+                  if (data.status != null) existing.state.status = data.status
+                  if (data.rawInput !== undefined) existing.state.rawInput = data.rawInput
+                  if (data.rawOutput !== undefined) existing.state.rawOutput = data.rawOutput
+                } else {
+                  blocks.push({
+                    type: "tool_call",
+                    state: {
+                      toolCallId: data.toolCallId,
+                      title: data.title || "Tool call",
+                      kind: data.kind,
+                      status: data.status || "in_progress",
+                      rawInput: data.rawInput,
+                      rawOutput: data.rawOutput,
+                    },
+                  })
+                }
+                blocksRef.current = blocks
+                setStreamingBlocks([...blocks])
+              } else if (data.sessionUpdate === "tool_call_update") {
+                const blocks = blocksRef.current
+                const tc = blocks.find(
+                  (b): b is StreamingBlock & { type: "tool_call" } =>
+                    b.type === "tool_call" && b.state.toolCallId === data.toolCallId
+                )
+                if (tc) {
+                  if (data.title != null) tc.state.title = data.title
+                  if (data.kind != null) tc.state.kind = data.kind
+                  if (data.status != null) tc.state.status = data.status
+                  if (data.rawInput !== undefined) tc.state.rawInput = data.rawInput
+                  if (data.rawOutput !== undefined) tc.state.rawOutput = data.rawOutput
+                }
+                blocksRef.current = blocks
+                setStreamingBlocks([...blocks])
               } else if (data.sessionUpdate === "done") {
-                // Finalize: add assistant turn to turns array
-                if (accumulatedRef.current) {
+                // Finalize: convert streaming blocks into a turn
+                const blocks = blocksRef.current
+                // Force-complete any tool calls still in progress
+                for (const b of blocks) {
+                  if (b.type === "tool_call" && (b.state.status === "in_progress" || b.state.status === "pending")) {
+                    b.state.status = "completed"
+                  }
+                }
+                if (blocks.length > 0) {
+                  const now = Date.now()
+                  const turnId = `temp-assistant-${now}`
+                  const turnBlocks: BlockData[] = blocks.map((b, i) => {
+                    if (b.type === "text") {
+                      return {
+                        id: `temp-ablock-${now}-${i}`,
+                        turn_id: turnId,
+                        kind: "text",
+                        content: b.content,
+                        created_at: now + i,
+                      }
+                    }
+                    return {
+                      id: `temp-ablock-${now}-${i}`,
+                      turn_id: turnId,
+                      kind: "tool_call",
+                      content: JSON.stringify(b.state),
+                      created_at: now + i,
+                    }
+                  })
                   const assistantTurn: TurnData = {
-                    id: `temp-assistant-${Date.now()}`,
+                    id: turnId,
                     session_id: sessionId,
                     role: "assistant",
                     stop_reason: data.stopReason || "end_turn",
-                    created_at: Date.now(),
-                    blocks: [
-                      {
-                        id: `temp-ablock-${Date.now()}`,
-                        turn_id: `temp-assistant-${Date.now()}`,
-                        kind: "text",
-                        content: accumulatedRef.current,
-                        created_at: Date.now(),
-                      },
-                    ],
+                    created_at: now,
+                    blocks: turnBlocks,
                   }
                   setTurns((prev) => [...prev, assistantTurn])
                 }
-                setStreamingText("")
+                setStreamingBlocks([])
+                blocksRef.current = []
               } else if (data.sessionUpdate === "error") {
-                setStreamingText(
-                  (prev) => prev + `\n\nError: ${data.message}`
-                )
+                const blocks = blocksRef.current
+                const last = blocks[blocks.length - 1]
+                if (last && last.type === "text") {
+                  last.content += `\n\nError: ${data.message}`
+                } else {
+                  blocks.push({ type: "text", content: `Error: ${data.message}` })
+                }
+                blocksRef.current = blocks
+                setStreamingBlocks([...blocks])
               }
             } catch {
               // Ignore parse errors
@@ -249,27 +449,48 @@ export default function ChatView({
         }
       } catch (err) {
         if (err instanceof DOMException && err.name === "AbortError") {
-          // User cancelled
-          if (accumulatedRef.current) {
+          // User cancelled — finalize whatever we have so far
+          const blocks = blocksRef.current
+          if (blocks.length > 0) {
+            // Append [cancelled] to last text block or add one
+            const last = blocks[blocks.length - 1]
+            if (last && last.type === "text") {
+              last.content += "\n\n[cancelled]"
+            } else {
+              blocks.push({ type: "text", content: "[cancelled]" })
+            }
+            const now = Date.now()
+            const turnId = `temp-cancelled-${now}`
+            const turnBlocks: BlockData[] = blocks.map((b, i) => {
+              if (b.type === "text") {
+                return {
+                  id: `temp-cblock-${now}-${i}`,
+                  turn_id: turnId,
+                  kind: "text",
+                  content: b.content,
+                  created_at: now + i,
+                }
+              }
+              return {
+                id: `temp-cblock-${now}-${i}`,
+                turn_id: turnId,
+                kind: "tool_call",
+                content: JSON.stringify(b.state),
+                created_at: now + i,
+              }
+            })
             const assistantTurn: TurnData = {
-              id: `temp-cancelled-${Date.now()}`,
+              id: turnId,
               session_id: sessionId,
               role: "assistant",
               stop_reason: "cancelled",
-              created_at: Date.now(),
-              blocks: [
-                {
-                  id: `temp-cblock-${Date.now()}`,
-                  turn_id: `temp-cancelled-${Date.now()}`,
-                  kind: "text",
-                  content: accumulatedRef.current + "\n\n[cancelled]",
-                  created_at: Date.now(),
-                },
-              ],
+              created_at: now,
+              blocks: turnBlocks,
             }
             setTurns((prev) => [...prev, assistantTurn])
           }
-          setStreamingText("")
+          setStreamingBlocks([])
+          blocksRef.current = []
         }
       } finally {
         abortRef.current = null
@@ -352,29 +573,24 @@ export default function ChatView({
                   </div>
                 </div>
               ) : (
-                /* Assistant response */
+                /* Assistant response — interleave blocks in order */
                 <div className="py-1">
-                  {turn.blocks
-                    .filter((b) => b.kind === "text")
-                    .map((b) => (
-                      <div
-                        key={b.id}
-                        className="text-sm leading-[1.7] whitespace-pre-wrap text-[var(--t-text)] pl-5 border-l-2 border-[var(--t-border)]"
-                      >
-                        {b.content}
-                      </div>
-                    ))}
-                  {turn.blocks
-                    .filter(
-                      (b) =>
-                        b.kind === "tool_call" ||
-                        b.kind === "tool_call_update"
-                    )
-                    .map((b) => (
-                      <div key={b.id} className="pl-5 border-l-2 border-[var(--t-border)]">
-                        <ToolCallBlock block={b} />
-                      </div>
-                    ))}
+                  {mergeToolCallUpdates(turn.blocks)
+                    .filter((b) => b.kind === "text" || b.kind === "tool_call")
+                    .map((b) =>
+                      b.kind === "text" ? (
+                        <div
+                          key={b.id}
+                          className="text-sm leading-[1.7] whitespace-pre-wrap text-[var(--t-text)] pl-5 border-l-2 border-[var(--t-border)]"
+                        >
+                          {b.content}
+                        </div>
+                      ) : (
+                        <div key={b.id} className="pl-5 border-l-2 border-[var(--t-border)]">
+                          <ToolCallBox state={parseToolCallBlock(b)} />
+                        </div>
+                      )
+                    )}
                   {turn.stop_reason && turn.stop_reason !== "end_turn" && (
                     <div className="pl-5 mt-1 text-[11px] font-mono text-[var(--t-dim)]">
                       [{turn.stop_reason}]
@@ -386,17 +602,30 @@ export default function ChatView({
           ))}
 
           {/* Streaming assistant output */}
-          {streamingText && (
+          {hasStreamingContent && (
             <div className="py-1">
-              <div className="text-sm leading-[1.7] whitespace-pre-wrap text-[var(--t-text)] pl-5 border-l-2 border-[var(--t-accent)]">
-                {streamingText}
-                <span className="inline-block ml-0.5 animate-block-blink text-[var(--t-accent)]">&#9608;</span>
-              </div>
+              {streamingBlocks.map((block, i) =>
+                block.type === "text" ? (
+                  <div
+                    key={`stream-${i}`}
+                    className="text-sm leading-[1.7] whitespace-pre-wrap text-[var(--t-text)] pl-5 border-l-2 border-[var(--t-accent)]"
+                  >
+                    {block.content}
+                    {i === streamingBlocks.length - 1 && (
+                      <span className="inline-block ml-0.5 animate-block-blink text-[var(--t-accent)]">&#9608;</span>
+                    )}
+                  </div>
+                ) : (
+                  <div key={`stream-${i}`} className="pl-5 border-l-2 border-[var(--t-accent)]">
+                    <ToolCallBox state={block.state} />
+                  </div>
+                )
+              )}
             </div>
           )}
 
           {/* Waiting for response */}
-          {prompting && !streamingText && (
+          {prompting && !hasStreamingContent && (
             <div className="py-1">
               <div className="text-sm text-[var(--t-muted)] pl-5 border-l-2 border-[var(--t-accent)]">
                 <span className="animate-pulse">...</span>
