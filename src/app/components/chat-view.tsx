@@ -441,7 +441,7 @@ export default function ChatView({
               <Square className="size-3.5" />
             </button>
           ) : (
-            <div className="shrink-0 text-[11px] text-[var(--t-dim)] leading-[1.625rem] select-none">
+            <div className="shrink-0 text-[11px] text-[var(--t-muted)] leading-[1.625rem] select-none">
               enter &#8629;
             </div>
           )}
