@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect, useCallback } from "react"
+import { useState, useEffect, useCallback, useRef } from "react"
 import Sidebar from "./sidebar"
 import ChatView from "./chat-view"
 
@@ -20,7 +20,6 @@ interface SessionLayoutProps {
 }
 
 export default function SessionLayout({ initialSessions }: SessionLayoutProps) {
-  const hasInitialData = initialSessions !== undefined
   const hasInitialSessions = !!initialSessions?.length
   const [sessions, setSessions] = useState<Session[]>(initialSessions ?? [])
   const [activeSessionId, _setActiveSessionId] = useState<string | null>(
@@ -40,30 +39,16 @@ export default function SessionLayout({ initialSessions }: SessionLayoutProps) {
     () => new Set(initialSessions?.filter((s) => s.prompting).map((s) => s.id) ?? [])
   )
 
-  const fetchSessions = useCallback(async () => {
-    const res = await fetch("/api/sessions")
-    const data: Session[] = await res.json()
-    setSessions(data)
-    setConnectedSessionIds(
-      new Set(data.filter((s) => s.connected).map((s) => s.id))
-    )
-    setPromptingSessionIds(
-      new Set(data.filter((s) => s.prompting).map((s) => s.id))
-    )
-    return data
-  }, [])
-
-  // Load sessions on mount
+  // Initialize on mount
   useEffect(() => {
     if (hasInitialSessions) {
-      // Server provided sessions and we're already initialized.
-      // Just check localStorage for a saved active session.
+      // Server provided sessions — restore active from localStorage
       const saved = localStorage.getItem("acapa:activeSessionId")
       if (saved && initialSessions!.some((s) => s.id === saved)) {
         _setActiveSessionId(saved)
       }
-    } else if (hasInitialData) {
-      // Server ran but returned zero sessions — auto-create one client-side
+    } else {
+      // No sessions — auto-create first session
       fetch("/api/sessions", { method: "POST" })
         .then((res) => res.json())
         .then((session: Session) => {
@@ -74,29 +59,48 @@ export default function SessionLayout({ initialSessions }: SessionLayoutProps) {
           }
           setInitialized(true)
         })
-    } else {
-      // No server data — fetch client-side (fallback)
-      fetchSessions().then((data) => {
-        if (data.length === 0) {
-          fetch("/api/sessions", { method: "POST" })
-            .then((res) => res.json())
-            .then((session: Session) => {
-              setSessions([session])
-              setActiveSessionId(session.id)
-              if (session.connected) {
-                setConnectedSessionIds(new Set([session.id]))
-              }
-              setInitialized(true)
-            })
-        } else {
-          const saved = localStorage.getItem("acapa:activeSessionId")
-          const match = saved && data.some((s) => s.id === saved)
-          setActiveSessionId(match ? saved : data[0].id)
-          setInitialized(true)
-        }
-      })
     }
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Poll connection status every 5 seconds to detect agent crashes
+  const connectedRef = useRef(connectedSessionIds)
+  const promptingRef = useRef(promptingSessionIds)
+  connectedRef.current = connectedSessionIds
+  promptingRef.current = promptingSessionIds
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      fetch("/api/sessions/status")
+        .then((res) => res.json())
+        .then((data: { connected: string[]; prompting: string[] }) => {
+          const nextConnected = new Set(data.connected)
+          const nextPrompting = new Set(data.prompting)
+
+          // Only update if changed to avoid unnecessary renders
+          const prevConnected = connectedRef.current
+          const prevPrompting = promptingRef.current
+
+          if (
+            nextConnected.size !== prevConnected.size ||
+            [...nextConnected].some((id) => !prevConnected.has(id)) ||
+            [...prevConnected].some((id) => !nextConnected.has(id))
+          ) {
+            setConnectedSessionIds(nextConnected)
+          }
+
+          if (
+            nextPrompting.size !== prevPrompting.size ||
+            [...nextPrompting].some((id) => !prevPrompting.has(id)) ||
+            [...prevPrompting].some((id) => !nextPrompting.has(id))
+          ) {
+            setPromptingSessionIds(nextPrompting)
+          }
+        })
+        .catch(() => {})
+    }, 5000)
+
+    return () => clearInterval(interval)
+  }, [])
 
   const handleCreate = async (agentType?: string) => {
     const res = await fetch("/api/sessions", {

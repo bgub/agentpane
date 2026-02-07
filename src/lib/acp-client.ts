@@ -41,6 +41,7 @@ interface AgentConnection {
   accumulatedText: string
   terminals: Map<string, TerminalState>
   cwd: string
+  cleaned: boolean
 }
 
 interface SubscribeResult {
@@ -48,7 +49,7 @@ interface SubscribeResult {
   stream: ReadableStream<string>
   prompting: boolean
   assistantTurnId: string | null
-  accumulatedText: string
+  latestEventId: number
 }
 
 export class AcpClient extends Context.Tag("@acapa/AcpClient")<
@@ -66,7 +67,7 @@ export class AcpClient extends Context.Tag("@acapa/AcpClient")<
     readonly cancel: (sessionId: string) => Effect.Effect<void>
     readonly disconnect: (sessionId: string) => Effect.Effect<void>
     readonly isConnected: (sessionId: string) => Effect.Effect<boolean>
-    readonly subscribe: (sessionId: string) => Effect.Effect<SubscribeResult, AcpConnectionError>
+    readonly subscribe: (sessionId: string, afterEventId?: number) => Effect.Effect<SubscribeResult, AcpConnectionError>
     readonly unsubscribe: (sessionId: string, subscriberId: string) => Effect.Effect<void>
     readonly connectedSessionIds: () => ReadonlySet<string>
     readonly promptingSessionIds: () => ReadonlySet<string>
@@ -106,6 +107,32 @@ export class AcpClient extends Context.Tag("@acapa/AcpClient")<
           throw RequestError.resourceNotFound(terminalId)
         }
         return terminal
+      }
+
+      const cleanupConnection = (sessionId: string, conn: AgentConnection) => {
+        if (conn.cleaned) return
+        conn.cleaned = true
+
+        // Broadcast disconnected event (goes into ring buffer for client catch-up)
+        conn.broadcaster.broadcast({ sessionUpdate: "disconnected" })
+
+        connections.delete(sessionId)
+
+        // Kill all terminal subprocesses
+        for (const terminal of conn.terminals.values()) {
+          if (!terminal.process.killed) {
+            terminal.process.kill()
+          }
+        }
+        conn.terminals.clear()
+
+        // Update DB
+        runPromise(
+          repo.updateAgentSessionId(sessionId, null).pipe(Effect.orDie)
+        ).catch(() => {})
+
+        // Close broadcaster after microtask to let disconnect event be delivered
+        setTimeout(() => conn.broadcaster.close(), 0)
       }
 
       const makeClient = (
@@ -362,6 +389,7 @@ export class AcpClient extends Context.Tag("@acapa/AcpClient")<
             accumulatedText: "",
             terminals: new Map(),
             cwd: effectiveCwd,
+            cleaned: false,
           }
           connRef.current = agentConn
           connections.set(sessionId, agentConn)
@@ -371,16 +399,13 @@ export class AcpClient extends Context.Tag("@acapa/AcpClient")<
             .updateAgentSessionId(sessionId, agentSessionId)
             .pipe(Effect.orDie)
 
-          // Clean up when connection closes
+          // Consolidated cleanup for both connection close and process exit
           clientConnection.closed.then(() => {
-            connections.delete(sessionId)
-            runPromise(
-              repo.updateAgentSessionId(sessionId, null).pipe(Effect.orDie)
-            ).catch(() => {})
+            cleanupConnection(sessionId, agentConn)
           })
 
           proc.on("exit", () => {
-            connections.delete(sessionId)
+            cleanupConnection(sessionId, agentConn)
           })
 
           return { agentSessionId }
@@ -422,51 +447,64 @@ export class AcpClient extends Context.Tag("@acapa/AcpClient")<
             assistantTurnId: assistantTurn.id,
           })
 
-          // Fire prompt asynchronously
-          conn.connection
-            .prompt({
-              sessionId: conn.agentSessionId,
-              prompt: [{ type: "text", text: content }],
-            })
-            .then((response) => {
-              // Persist accumulated text
-              if (conn.accumulatedText) {
-                runPromise(
-                  repo.addMessageBlock(assistantTurn.id, "text", conn.accumulatedText).pipe(Effect.orDie)
-                ).catch(() => {})
-              }
-              // Complete turn
-              runPromise(
-                repo.completeTurn(assistantTurn.id, response.stopReason || "end_turn").pipe(Effect.orDie)
-              ).catch(() => {})
-              // Broadcast done
-              conn.broadcaster.broadcast({
-                sessionUpdate: "done",
-                stopReason: response.stopReason || "end_turn",
+          // Fire prompt asynchronously using Effect
+          const promptEffect = Effect.tryPromise({
+            try: () =>
+              conn.connection.prompt({
+                sessionId: conn.agentSessionId,
+                prompt: [{ type: "text", text: content }],
+              }),
+            catch: (err) => err,
+          }).pipe(
+            Effect.tapBoth({
+              onSuccess: (response) =>
+                Effect.gen(function* () {
+                  // Persist accumulated text
+                  if (conn.accumulatedText) {
+                    yield* repo
+                      .addMessageBlock(assistantTurn.id, "text", conn.accumulatedText)
+                      .pipe(Effect.orDie)
+                  }
+                  // Complete turn
+                  yield* repo
+                    .completeTurn(assistantTurn.id, response.stopReason || "end_turn")
+                    .pipe(Effect.orDie)
+                  // Broadcast done
+                  conn.broadcaster.broadcast({
+                    sessionUpdate: "done",
+                    stopReason: response.stopReason || "end_turn",
+                  })
+                }),
+              onFailure: (err) =>
+                Effect.gen(function* () {
+                  // Persist what we have
+                  if (conn.accumulatedText) {
+                    yield* repo
+                      .addMessageBlock(assistantTurn.id, "text", conn.accumulatedText)
+                      .pipe(Effect.orDie)
+                  }
+                  // Complete turn as error
+                  yield* repo
+                    .completeTurn(assistantTurn.id, "error")
+                    .pipe(Effect.orDie)
+                  // Broadcast error
+                  conn.broadcaster.broadcast({
+                    sessionUpdate: "error",
+                    message: String(err),
+                  })
+                }),
+            }),
+            Effect.ensuring(
+              Effect.sync(() => {
+                conn.prompting = false
+                conn.currentAssistantTurnId = null
+                conn.accumulatedText = ""
               })
-            })
-            .catch((err) => {
-              // Persist what we have
-              if (conn.accumulatedText) {
-                runPromise(
-                  repo.addMessageBlock(assistantTurn.id, "text", conn.accumulatedText).pipe(Effect.orDie)
-                ).catch(() => {})
-              }
-              // Complete turn as error
-              runPromise(
-                repo.completeTurn(assistantTurn.id, "error").pipe(Effect.orDie)
-              ).catch(() => {})
-              // Broadcast error
-              conn.broadcaster.broadcast({
-                sessionUpdate: "error",
-                message: String(err),
-              })
-            })
-            .finally(() => {
-              conn.prompting = false
-              conn.currentAssistantTurnId = null
-              conn.accumulatedText = ""
-            })
+            ),
+            Effect.ignore
+          )
+
+          yield* Effect.forkDaemon(promptEffect)
 
           return { userTurnId: userTurn.id, assistantTurnId: assistantTurn.id }
         }
@@ -484,7 +522,7 @@ export class AcpClient extends Context.Tag("@acapa/AcpClient")<
       )
 
       const subscribe = Effect.fn("AcpClient.subscribe")(
-        function* (sessionId: string) {
+        function* (sessionId: string, afterEventId?: number) {
           const conn = connections.get(sessionId)
           if (!conn) {
             return yield* new AcpConnectionError({
@@ -492,14 +530,15 @@ export class AcpClient extends Context.Tag("@acapa/AcpClient")<
             })
           }
 
-          const { subscriberId, stream } = conn.broadcaster.subscribe()
+          const { subscriberId, stream, latestEventId } =
+            conn.broadcaster.subscribe(afterEventId)
 
           return {
             subscriberId,
             stream,
             prompting: conn.prompting,
             assistantTurnId: conn.currentAssistantTurnId,
-            accumulatedText: conn.accumulatedText,
+            latestEventId,
           }
         }
       )
@@ -517,6 +556,9 @@ export class AcpClient extends Context.Tag("@acapa/AcpClient")<
         function* (sessionId: string) {
           const conn = connections.get(sessionId)
           if (conn) {
+            // Mark as cleaned to prevent the async cleanup handlers from
+            // running after we've already cleaned up
+            conn.cleaned = true
             connections.delete(sessionId)
             // Kill all terminal subprocesses
             for (const terminal of conn.terminals.values()) {

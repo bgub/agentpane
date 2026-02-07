@@ -254,9 +254,6 @@ export default function ChatView({
   const scrollRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const blocksRef = useRef<StreamingBlock[]>([])
-  // Tracks whether the EventSource has received its first message (the status event)
-  const esOpenRef = useRef(false)
-  const esReadyCallbacks = useRef<(() => void)[]>([])
 
   const hasStreamingContent = streamingBlocks.length > 0
 
@@ -287,82 +284,42 @@ export default function ChatView({
       .catch(() => setLoaded(true))
   }, [sessionId])
 
+  // Re-fetch conversation from DB (used after prompt completion)
+  const refreshConversation = useCallback(() => {
+    fetch(`/api/sessions/${sessionId}/conversation`)
+      .then((res) => res.json())
+      .then((data: TurnData[]) => {
+        setTurns(data)
+        blocksRef.current = []
+        setStreamingBlocks([])
+      })
+      .catch(() => {})
+  }, [sessionId])
+
   // Persistent EventSource connection for SSE events
   useEffect(() => {
-    if (!connected) {
-      esOpenRef.current = false
-      return
-    }
+    if (!connected) return
 
-    esOpenRef.current = false
     const es = new EventSource(`/api/sessions/${sessionId}/events`)
 
     es.onmessage = (event) => {
-      if (!esOpenRef.current) {
-        esOpenRef.current = true
-        for (const cb of esReadyCallbacks.current) cb()
-        esReadyCallbacks.current = []
-      }
-
       try {
         const data = JSON.parse(event.data) as Record<string, unknown>
         const eventType = data.sessionUpdate as string
 
         if (eventType === "status") {
-          // Initial catch-up on connect
+          // Initial status on connect — replay events rebuild streaming state
           const isPrompting = data.prompting as boolean
           setPrompting(isPrompting)
-          if (isPrompting && data.accumulatedText) {
-            const blocks: StreamingBlock[] = [{ type: "text", content: data.accumulatedText as string }]
-            blocksRef.current = blocks
-            setStreamingBlocks([...blocks])
-          }
         } else if (eventType === "prompt_started") {
           setPrompting(true)
           blocksRef.current = []
           setStreamingBlocks([])
         } else if (eventType === "done") {
-          // Finalize streaming blocks into a completed turn
-          const blocks = blocksRef.current
-          for (const b of blocks) {
-            if (b.type === "tool_call" && (b.state.status === "in_progress" || b.state.status === "pending")) {
-              b.state.status = "completed"
-            }
-          }
-          if (blocks.length > 0) {
-            const now = Date.now()
-            const turnId = `temp-assistant-${now}`
-            const turnBlocks: BlockData[] = blocks.map((b, i) => {
-              if (b.type === "text") {
-                return {
-                  id: `temp-ablock-${now}-${i}`,
-                  turn_id: turnId,
-                  kind: "text",
-                  content: b.content,
-                  created_at: now + i,
-                }
-              }
-              return {
-                id: `temp-ablock-${now}-${i}`,
-                turn_id: turnId,
-                kind: "tool_call",
-                content: JSON.stringify(b.state),
-                created_at: now + i,
-              }
-            })
-            const assistantTurn: TurnData = {
-              id: turnId,
-              session_id: sessionId,
-              role: "assistant",
-              stop_reason: (data.stopReason as string) || "end_turn",
-              created_at: now,
-              blocks: turnBlocks,
-            }
-            setTurns((prev) => [...prev, assistantTurn])
-          }
-          blocksRef.current = []
-          setStreamingBlocks([])
           setPrompting(false)
+          // Re-fetch from DB — guaranteed up-to-date by Effect-native prompt lifecycle
+          // Keep streaming blocks visible until fetch returns to prevent flicker
+          refreshConversation()
         } else if (eventType === "error") {
           const blocks = blocksRef.current
           const last = blocks[blocks.length - 1]
@@ -374,6 +331,9 @@ export default function ChatView({
           blocksRef.current = blocks
           setStreamingBlocks([...blocks])
           setPrompting(false)
+        } else if (eventType === "disconnected") {
+          setPrompting(false)
+          onConnectionChange?.(sessionId, false)
         } else {
           // agent_message_chunk, tool_call, tool_call_update
           const updated = applyEventToBlocks(blocksRef.current, data)
@@ -391,9 +351,11 @@ export default function ChatView({
 
     return () => {
       es.close()
-      esOpenRef.current = false
+      // Clear streaming state so replayed events rebuild from scratch on new EventSource
+      blocksRef.current = []
+      setStreamingBlocks([])
     }
-  }, [connected, sessionId])
+  }, [connected, sessionId, refreshConversation, onConnectionChange])
 
   // Ensure agent is connected (auto-connect if not)
   const ensureConnected = useCallback(async (): Promise<string | true> => {
@@ -430,17 +392,6 @@ export default function ChatView({
       if (connectResult !== true) {
         setStreamingBlocks([{ type: "text", content: `Error: ${connectResult}` }])
         return
-      }
-
-      // Wait for EventSource to be subscribed before sending the prompt.
-      // After ensureConnected() updates `connected`, React schedules a re-render
-      // and the EventSource useEffect runs asynchronously. We must wait for it
-      // to actually open so events aren't broadcast to zero subscribers.
-      if (!esOpenRef.current) {
-        await new Promise<void>((resolve) => {
-          esReadyCallbacks.current.push(resolve)
-          setTimeout(resolve, 5000)
-        })
       }
 
       setInput("")

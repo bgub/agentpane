@@ -4,13 +4,17 @@ import { Effect, Exit } from "effect"
 import type { NextRequest } from "next/server"
 
 export async function GET(
-  _request: NextRequest,
+  request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params
 
+  // SSE standard: EventSource sends Last-Event-ID on auto-reconnect
+  const lastEventIdHeader = request.headers.get("Last-Event-ID")
+  const afterEventId = lastEventIdHeader ? parseInt(lastEventIdHeader, 10) : undefined
+
   const exit = await AppRuntime.runPromiseExit(
-    Effect.flatMap(AcpClient, (acp) => acp.subscribe(id))
+    Effect.flatMap(AcpClient, (acp) => acp.subscribe(id, afterEventId))
   )
 
   return Exit.match(exit, {
@@ -20,22 +24,21 @@ export async function GET(
       }
       return Response.json({ error: "Internal error" }, { status: 500 })
     },
-    onSuccess: ({ subscriberId, stream, prompting, assistantTurnId, accumulatedText }) => {
+    onSuccess: ({ subscriberId, stream, prompting, assistantTurnId, latestEventId }) => {
       const encoder = new TextEncoder()
 
-      // Prepend a status event, then pipe broadcaster stream
+      // Prepend a status event (id: 0 so it doesn't interfere with replay sequence)
       const outputStream = new ReadableStream<Uint8Array>({
         async start(controller) {
-          // Send initial status event for mid-stream catch-up
-          const statusPayload = `data: ${JSON.stringify({
+          const statusPayload = `id: 0\ndata: ${JSON.stringify({
             sessionUpdate: "status",
             prompting,
             assistantTurnId,
-            accumulatedText,
+            latestEventId,
           })}\n\n`
           controller.enqueue(encoder.encode(statusPayload))
 
-          // Pipe broadcaster events
+          // Pipe broadcaster events (includes replayed events from ring buffer)
           const reader = stream.getReader()
           try {
             while (true) {
