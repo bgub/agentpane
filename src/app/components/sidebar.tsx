@@ -1,7 +1,6 @@
 "use client"
 
 import { useState, useRef, useEffect, type KeyboardEvent } from "react"
-import { Button } from "@/components/ui/button"
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -9,7 +8,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { ScrollArea } from "@/components/ui/scroll-area"
-import { Ellipsis, Plus } from "lucide-react"
+import { EllipsisVertical, Plus } from "lucide-react"
 
 interface Session {
   id: string
@@ -137,14 +136,12 @@ export default function Sidebar({
                     </span>
                     <DropdownMenu>
                       <DropdownMenuTrigger asChild>
-                        <Button
-                          variant="ghost"
-                          size="icon"
+                        <button
                           onClick={(e) => e.stopPropagation()}
-                          className="opacity-0 group-hover:opacity-100 data-[state=open]:opacity-100 size-6 cursor-pointer text-[var(--t-muted)] hover:text-[var(--t-bright)] hover:bg-[var(--t-dim)]/30 data-[state=open]:bg-[var(--t-dim)]/30 data-[state=open]:text-[var(--t-bright)]"
+                          className="opacity-0 group-hover:opacity-100 data-[state=open]:opacity-100 shrink-0 cursor-pointer text-[var(--t-dim)] hover:text-[var(--t-bright)] data-[state=open]:text-[var(--t-bright)] transition-colors"
                         >
-                          <Ellipsis className="size-3.5" />
-                        </Button>
+                          <EllipsisVertical className="size-3" />
+                        </button>
                       </DropdownMenuTrigger>
                       <DropdownMenuContent align="start" side="bottom" className="min-w-32">
                         <DropdownMenuItem
