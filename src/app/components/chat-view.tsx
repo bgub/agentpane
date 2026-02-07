@@ -407,9 +407,9 @@ export default function ChatView({
       </div>
 
       {/* Input area */}
-      <div className="shrink-0 border-t border-[var(--t-border)] bg-[var(--t-surface)] px-5 py-3">
-        <div className="max-w-3xl mx-auto flex items-end gap-2.5">
-          <span className={`shrink-0 text-sm font-mono select-none leading-[1.625rem] ${
+      <div className="shrink-0 h-12 border-t border-[var(--t-border)] bg-[var(--t-surface)] px-5 flex items-center">
+        <div className="max-w-3xl mx-auto w-full flex items-center gap-2.5">
+          <span className={`shrink-0 text-sm font-mono select-none ${
             prompting ? "text-[var(--t-dim)]" : "text-[var(--t-accent)]"
           }`}>
             &#10095;
@@ -441,9 +441,9 @@ export default function ChatView({
               <Square className="size-3.5" />
             </button>
           ) : (
-            <div className="shrink-0 text-[11px] text-[var(--t-muted)] leading-[1.625rem] select-none">
+            <span className="shrink-0 text-xs text-[var(--t-muted)] select-none">
               enter &#8629;
-            </div>
+            </span>
           )}
         </div>
       </div>

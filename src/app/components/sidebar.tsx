@@ -132,7 +132,7 @@ export default function Sidebar({
                   <>
                     {statusDot(session.id)}
                     <span className="flex-1 truncate">{session.name}</span>
-                    <span className="shrink-0 text-[9px] font-mono font-medium tracking-wide text-[var(--t-dim)]">
+                    <span className="shrink-0 text-[10px] font-mono font-medium tracking-wide text-[var(--t-muted)]">
                       {session.agent_type === "claude-code" ? "CLAUDE" : session.agent_type.toUpperCase()}
                     </span>
                     <DropdownMenu>
@@ -175,8 +175,8 @@ export default function Sidebar({
       </ScrollArea>
 
       {/* Branding */}
-      <div className="shrink-0 px-3 py-3 border-t border-[var(--t-border)]">
-        <span className="text-[11px] font-medium text-[var(--t-muted)]">acapa</span>
+      <div className="shrink-0 h-12 flex items-center px-3 border-t border-[var(--t-border)]">
+        <span className="text-xs font-medium text-[var(--t-muted)]">acapa</span>
       </div>
     </div>
   )
