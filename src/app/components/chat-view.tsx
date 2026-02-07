@@ -22,6 +22,7 @@ interface BlockData {
 
 interface ChatViewProps {
   sessionId: string
+  cwd: string
   active: boolean
   connected: boolean
   onPromptingChange?: (sessionId: string, prompting: boolean) => void
@@ -61,6 +62,7 @@ function ToolCallBlock({ block }: { block: BlockData }) {
 
 export default function ChatView({
   sessionId,
+  cwd,
   active,
   connected,
   onPromptingChange,
@@ -299,8 +301,12 @@ export default function ChatView({
   return (
     <div className="flex h-full min-h-0 flex-col bg-[var(--t-bg)]">
       {/* Top status bar */}
-      <div className="flex h-9 shrink-0 items-center justify-between px-4 bg-[var(--t-surface)] border-b border-[var(--t-border)]">
-        <span className="text-xs font-medium text-[var(--t-accent)]">acapa</span>
+      <div className="flex h-10 shrink-0 items-center justify-between px-4 bg-[var(--t-surface)] border-b border-[var(--t-border)]">
+        <div className="flex items-center gap-2 min-w-0">
+          <span className="shrink-0 text-xs font-medium text-[var(--t-accent)]">acapa</span>
+          <span className="text-[var(--t-dim)] text-xs">/</span>
+          <span className="text-xs text-[var(--t-muted)] truncate">{cwd.replace(/^\/home\/[^/]+/, '~')}</span>
+        </div>
         <div className="flex items-center gap-3 text-xs">
           {prompting && (
             <span className="flex items-center gap-1.5 text-[var(--t-amber)]">

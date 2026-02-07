@@ -132,8 +132,8 @@ export default function Sidebar({
                   <>
                     {statusDot(session.id)}
                     <span className="flex-1 truncate">{session.name}</span>
-                    <span className="shrink-0 text-[10px] font-mono text-[var(--t-dim)]">
-                      {session.agent_type === "claude-code" ? "cc" : session.agent_type}
+                    <span className="shrink-0 text-[9px] font-mono font-medium tracking-wide text-[var(--t-dim)]">
+                      {session.agent_type === "claude-code" ? "CLAUDE" : session.agent_type.toUpperCase()}
                     </span>
                     <DropdownMenu>
                       <DropdownMenuTrigger asChild>

@@ -153,6 +153,7 @@ export default function SessionLayout() {
           >
             <ChatView
               sessionId={session.id}
+              cwd={session.cwd}
               active={session.id === activeSessionId}
               connected={connectedSessionIds.has(session.id)}
               onPromptingChange={handlePromptingChange}
