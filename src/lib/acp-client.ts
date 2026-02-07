@@ -1,10 +1,12 @@
 import { spawn, type ChildProcess } from "node:child_process"
+import crypto from "node:crypto"
 import fs from "node:fs/promises"
 import { Context, Effect, Layer, Runtime } from "effect"
 import {
   ClientSideConnection,
   ndJsonStream,
   PROTOCOL_VERSION,
+  RequestError,
   type Client,
   type Agent,
 } from "@agentclientprotocol/sdk"
@@ -13,6 +15,21 @@ import { SessionRepo } from "./session-repo"
 import { AcpConnectionError } from "./schema"
 import { resolveProviderBin, PROVIDERS } from "./providers"
 
+interface TerminalExitStatus {
+  exitCode?: number | null
+  signal?: string | null
+}
+
+interface TerminalState {
+  process: ChildProcess
+  output: string
+  truncated: boolean
+  outputByteLimit: number | null
+  exitStatus: TerminalExitStatus | null
+  exitPromise: Promise<TerminalExitStatus>
+  resolveExit: (status: TerminalExitStatus) => void
+}
+
 interface AgentConnection {
   process: ChildProcess
   connection: ClientSideConnection
@@ -20,6 +37,8 @@ interface AgentConnection {
   /** Controller to push SSE events during a prompt */
   sseController: ReadableStreamDefaultController<string> | null
   prompting: boolean
+  terminals: Map<string, TerminalState>
+  cwd: string
 }
 
 export class AcpClient extends Context.Tag("@acapa/AcpClient")<
@@ -49,6 +68,35 @@ export class AcpClient extends Context.Tag("@acapa/AcpClient")<
       const runPromise = Runtime.runPromise(runtime)
 
       const connections = new Map<string, AgentConnection>()
+
+      const appendOutput = (terminal: TerminalState, chunk: string) => {
+        terminal.output += chunk
+        if (
+          terminal.outputByteLimit !== null &&
+          Buffer.byteLength(terminal.output, "utf-8") > terminal.outputByteLimit
+        ) {
+          // Truncate from the beginning to stay within limit
+          const buf = Buffer.from(terminal.output, "utf-8")
+          let start = buf.length - terminal.outputByteLimit
+          // Advance to a valid UTF-8 character boundary
+          while (start < buf.length && (buf[start] & 0xc0) === 0x80) {
+            start++
+          }
+          terminal.output = buf.subarray(start).toString("utf-8")
+          terminal.truncated = true
+        }
+      }
+
+      const getTerminal = (
+        conn: AgentConnection,
+        terminalId: string
+      ): TerminalState => {
+        const terminal = conn.terminals.get(terminalId)
+        if (!terminal) {
+          throw RequestError.resourceNotFound(terminalId)
+        }
+        return terminal
+      }
 
       const makeClient = (
         connRef: { current: AgentConnection | null }
@@ -86,28 +134,101 @@ export class AcpClient extends Context.Tag("@acapa/AcpClient")<
             return {}
           },
 
-          createTerminal: async () => {
-            console.warn("[acapa] TODO: createTerminal not yet implemented")
-            return { terminalId: `stub-${Date.now()}` }
+          createTerminal: async (params) => {
+            const conn = connRef.current!
+            const terminalId = crypto.randomUUID()
+
+            const env = { ...process.env }
+            if (params.env) {
+              for (const v of params.env) {
+                env[v.name] = v.value
+              }
+            }
+
+            let resolveExit!: (status: TerminalExitStatus) => void
+            const exitPromise = new Promise<TerminalExitStatus>((resolve) => {
+              resolveExit = resolve
+            })
+
+            const termProc = spawn(params.command, params.args ?? [], {
+              cwd: params.cwd ?? conn.cwd,
+              env,
+              stdio: ["ignore", "pipe", "pipe"],
+            })
+
+            const terminal: TerminalState = {
+              process: termProc,
+              output: "",
+              truncated: false,
+              outputByteLimit: params.outputByteLimit ?? null,
+              exitStatus: null,
+              exitPromise,
+              resolveExit,
+            }
+
+            termProc.stdout?.on("data", (chunk: Buffer) => {
+              appendOutput(terminal, chunk.toString("utf-8"))
+            })
+            termProc.stderr?.on("data", (chunk: Buffer) => {
+              appendOutput(terminal, chunk.toString("utf-8"))
+            })
+            termProc.on("exit", (code, signal) => {
+              const status: TerminalExitStatus = {
+                exitCode: code,
+                signal: signal ?? null,
+              }
+              terminal.exitStatus = status
+              resolveExit(status)
+            })
+            termProc.on("error", (err) => {
+              appendOutput(terminal, `\nProcess error: ${err.message}\n`)
+              if (!terminal.exitStatus) {
+                const status: TerminalExitStatus = { exitCode: 1 }
+                terminal.exitStatus = status
+                resolveExit(status)
+              }
+            })
+
+            conn.terminals.set(terminalId, terminal)
+            return { terminalId }
           },
 
-          terminalOutput: async () => {
-            console.warn("[acapa] TODO: terminalOutput not yet implemented")
-            return { output: "", truncated: false }
+          terminalOutput: async (params) => {
+            const conn = connRef.current!
+            const terminal = getTerminal(conn, params.terminalId)
+            return {
+              output: terminal.output,
+              truncated: terminal.truncated,
+              exitStatus: terminal.exitStatus,
+            }
           },
 
-          waitForTerminalExit: async () => {
-            console.warn("[acapa] TODO: waitForTerminalExit not yet implemented")
-            return { exitCode: 0 }
+          waitForTerminalExit: async (params) => {
+            const conn = connRef.current!
+            const terminal = getTerminal(conn, params.terminalId)
+            const status = await terminal.exitPromise
+            const result: { exitCode?: number | null; signal?: string | null } = {}
+            if (status.exitCode !== undefined) result.exitCode = status.exitCode
+            if (status.signal !== undefined) result.signal = status.signal
+            return result
           },
 
-          killTerminal: async () => {
-            console.warn("[acapa] TODO: killTerminal not yet implemented")
+          killTerminal: async (params) => {
+            const conn = connRef.current!
+            const terminal = getTerminal(conn, params.terminalId)
+            if (!terminal.process.killed) {
+              terminal.process.kill()
+            }
             return {}
           },
 
-          releaseTerminal: async () => {
-            console.warn("[acapa] TODO: releaseTerminal not yet implemented")
+          releaseTerminal: async (params) => {
+            const conn = connRef.current!
+            const terminal = getTerminal(conn, params.terminalId)
+            if (!terminal.process.killed) {
+              terminal.process.kill()
+            }
+            conn.terminals.delete(params.terminalId)
             return {}
           },
         })
@@ -203,6 +324,8 @@ export class AcpClient extends Context.Tag("@acapa/AcpClient")<
             agentSessionId,
             sseController: null,
             prompting: false,
+            terminals: new Map(),
+            cwd: effectiveCwd,
           }
           connRef.current = agentConn
           connections.set(sessionId, agentConn)
@@ -294,6 +417,13 @@ export class AcpClient extends Context.Tag("@acapa/AcpClient")<
           const conn = connections.get(sessionId)
           if (conn) {
             connections.delete(sessionId)
+            // Kill all terminal subprocesses
+            for (const terminal of conn.terminals.values()) {
+              if (!terminal.process.killed) {
+                terminal.process.kill()
+              }
+            }
+            conn.terminals.clear()
             if (!conn.process.killed) {
               conn.process.kill()
             }
