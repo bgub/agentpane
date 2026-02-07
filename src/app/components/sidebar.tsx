@@ -173,6 +173,11 @@ export default function Sidebar({
           })}
         </div>
       </ScrollArea>
+
+      {/* Branding */}
+      <div className="shrink-0 px-3 py-2 border-t border-[var(--t-border)]">
+        <span className="text-[11px] font-medium text-[var(--t-dim)]">acapa</span>
+      </div>
     </div>
   )
 }
