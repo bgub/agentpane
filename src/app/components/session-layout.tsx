@@ -17,7 +17,13 @@ interface Session {
 
 export default function SessionLayout() {
   const [sessions, setSessions] = useState<Session[]>([])
-  const [activeSessionId, setActiveSessionId] = useState<string | null>(null)
+  const [activeSessionId, _setActiveSessionId] = useState<string | null>(null)
+
+  const setActiveSessionId = useCallback((id: string | null) => {
+    _setActiveSessionId(id)
+    if (id) localStorage.setItem("acapa:activeSessionId", id)
+    else localStorage.removeItem("acapa:activeSessionId")
+  }, [])
   const [initialized, setInitialized] = useState(false)
   const [connectedSessionIds, setConnectedSessionIds] = useState<Set<string>>(new Set())
   const [promptingSessionIds, setPromptingSessionIds] = useState<Set<string>>(new Set())
@@ -50,7 +56,9 @@ export default function SessionLayout() {
             setInitialized(true)
           })
       } else {
-        setActiveSessionId(data[0].id)
+        const saved = localStorage.getItem("acapa:activeSessionId")
+        const match = saved && data.some((s) => s.id === saved)
+        setActiveSessionId(match ? saved : data[0].id)
         setInitialized(true)
       }
     })
