@@ -2,6 +2,8 @@
 
 import { useState, useRef, useEffect, useCallback, type KeyboardEvent } from "react"
 import { Square, Check, X, Loader2, Terminal, FileText, Search, Brain, Pencil } from "lucide-react"
+import { Streamdown } from "streamdown"
+import { code } from "@streamdown/code"
 
 interface TurnData {
   id: string
@@ -41,6 +43,8 @@ interface ToolCallState {
 type StreamingBlock =
   | { type: "text"; content: string }
   | { type: "tool_call"; state: ToolCallState }
+
+const markdownPlugins = { code }
 
 function kindIcon(kind?: string) {
   const cls = "size-3.5 shrink-0"
@@ -581,9 +585,11 @@ export default function ChatView({
                       b.kind === "text" ? (
                         <div
                           key={b.id}
-                          className="text-sm leading-[1.7] whitespace-pre-wrap text-[var(--t-text)] pl-5 border-l-2 border-[var(--t-border)]"
+                          className="text-sm leading-[1.7] text-[var(--t-text)] pl-5 border-l-2 border-[var(--t-border)]"
                         >
-                          {b.content}
+                          <Streamdown plugins={markdownPlugins} mode="static">
+                            {b.content}
+                          </Streamdown>
                         </div>
                       ) : (
                         <div key={b.id} className="pl-5 border-l-2 border-[var(--t-border)]">
@@ -608,12 +614,11 @@ export default function ChatView({
                 block.type === "text" ? (
                   <div
                     key={`stream-${i}`}
-                    className="text-sm leading-[1.7] whitespace-pre-wrap text-[var(--t-text)] pl-5 border-l-2 border-[var(--t-accent)]"
+                    className="text-sm leading-[1.7] text-[var(--t-text)] pl-5 border-l-2 border-[var(--t-accent)]"
                   >
-                    {block.content}
-                    {i === streamingBlocks.length - 1 && (
-                      <span className="inline-block ml-0.5 animate-block-blink text-[var(--t-accent)]">&#9608;</span>
-                    )}
+                    <Streamdown plugins={markdownPlugins} isAnimating={i === streamingBlocks.length - 1}>
+                      {block.content}
+                    </Streamdown>
                   </div>
                 ) : (
                   <div key={`stream-${i}`} className="pl-5 border-l-2 border-[var(--t-accent)]">
