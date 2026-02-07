@@ -254,6 +254,9 @@ export default function ChatView({
   const scrollRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const blocksRef = useRef<StreamingBlock[]>([])
+  // Tracks whether the EventSource has received its first message (the status event)
+  const esOpenRef = useRef(false)
+  const esReadyCallbacks = useRef<(() => void)[]>([])
 
   const hasStreamingContent = streamingBlocks.length > 0
 
@@ -286,11 +289,21 @@ export default function ChatView({
 
   // Persistent EventSource connection for SSE events
   useEffect(() => {
-    if (!connected) return
+    if (!connected) {
+      esOpenRef.current = false
+      return
+    }
 
+    esOpenRef.current = false
     const es = new EventSource(`/api/sessions/${sessionId}/events`)
 
     es.onmessage = (event) => {
+      if (!esOpenRef.current) {
+        esOpenRef.current = true
+        for (const cb of esReadyCallbacks.current) cb()
+        esReadyCallbacks.current = []
+      }
+
       try {
         const data = JSON.parse(event.data) as Record<string, unknown>
         const eventType = data.sessionUpdate as string
@@ -378,6 +391,7 @@ export default function ChatView({
 
     return () => {
       es.close()
+      esOpenRef.current = false
     }
   }, [connected, sessionId])
 
@@ -416,6 +430,17 @@ export default function ChatView({
       if (connectResult !== true) {
         setStreamingBlocks([{ type: "text", content: `Error: ${connectResult}` }])
         return
+      }
+
+      // Wait for EventSource to be subscribed before sending the prompt.
+      // After ensureConnected() updates `connected`, React schedules a re-render
+      // and the EventSource useEffect runs asynchronously. We must wait for it
+      // to actually open so events aren't broadcast to zero subscribers.
+      if (!esOpenRef.current) {
+        await new Promise<void>((resolve) => {
+          esReadyCallbacks.current.push(resolve)
+          setTimeout(resolve, 5000)
+        })
       }
 
       setInput("")
