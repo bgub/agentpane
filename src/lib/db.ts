@@ -19,10 +19,14 @@ const migrations = Effect.gen(function* () {
       id TEXT PRIMARY KEY,
       name TEXT NOT NULL,
       cwd TEXT NOT NULL DEFAULT '~',
+      agent_type TEXT NOT NULL DEFAULT 'claude-code',
       agent_session_id TEXT,
       created_at INTEGER NOT NULL
     )
   `
+  yield* sql`ALTER TABLE sessions ADD COLUMN agent_type TEXT NOT NULL DEFAULT 'claude-code'`.pipe(
+    Effect.catchAll(() => Effect.void)
+  )
   yield* sql`
     CREATE TABLE IF NOT EXISTS turns (
       id TEXT PRIMARY KEY,

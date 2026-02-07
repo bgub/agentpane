@@ -1,7 +1,5 @@
 import { spawn, type ChildProcess } from "node:child_process"
 import fs from "node:fs/promises"
-import path from "node:path"
-import { Readable, Writable } from "node:stream"
 import { Context, Effect, Layer, Runtime } from "effect"
 import {
   ClientSideConnection,
@@ -9,27 +7,11 @@ import {
   PROTOCOL_VERSION,
   type Client,
   type Agent,
-  type SessionNotification,
-  type RequestPermissionRequest,
-  type RequestPermissionResponse,
-  type ReadTextFileRequest,
-  type ReadTextFileResponse,
-  type WriteTextFileRequest,
-  type WriteTextFileResponse,
-  type CreateTerminalRequest,
-  type CreateTerminalResponse,
-  type TerminalOutputRequest,
-  type TerminalOutputResponse,
-  type WaitForTerminalExitRequest,
-  type WaitForTerminalExitResponse,
-  type KillTerminalCommandRequest,
-  type KillTerminalCommandResponse,
-  type ReleaseTerminalRequest,
-  type ReleaseTerminalResponse,
 } from "@agentclientprotocol/sdk"
 import { nodeToWebWritable, nodeToWebReadable } from "@zed-industries/claude-code-acp"
 import { SessionRepo } from "./session-repo"
 import { AcpConnectionError } from "./schema"
+import { resolveProviderBin, PROVIDERS } from "./providers"
 
 interface AgentConnection {
   process: ChildProcess
@@ -45,7 +27,8 @@ export class AcpClient extends Context.Tag("@acapa/AcpClient")<
   {
     readonly connect: (
       sessionId: string,
-      cwd: string
+      cwd: string,
+      agentType: string
     ) => Effect.Effect<{ agentSessionId: string }, AcpConnectionError>
     readonly prompt: (
       sessionId: string,
@@ -71,7 +54,7 @@ export class AcpClient extends Context.Tag("@acapa/AcpClient")<
         connRef: { current: AgentConnection | null }
       ): ((agent: Agent) => Client) => {
         return (_agent: Agent): Client => ({
-          sessionUpdate: async (params: SessionNotification) => {
+          sessionUpdate: async (params) => {
             const conn = connRef.current
             if (conn?.sseController) {
               const event = `data: ${JSON.stringify(params.update)}\n\n`
@@ -79,9 +62,7 @@ export class AcpClient extends Context.Tag("@acapa/AcpClient")<
             }
           },
 
-          requestPermission: async (
-            params: RequestPermissionRequest
-          ): Promise<RequestPermissionResponse> => {
+          requestPermission: async (params) => {
             // Phase 1: auto-allow first option
             const firstOption = params.options[0]
             if (firstOption) {
@@ -95,51 +76,37 @@ export class AcpClient extends Context.Tag("@acapa/AcpClient")<
             return { outcome: { outcome: "cancelled" } }
           },
 
-          readTextFile: async (
-            params: ReadTextFileRequest
-          ): Promise<ReadTextFileResponse> => {
+          readTextFile: async (params) => {
             const content = await fs.readFile(params.path, "utf-8")
             return { content }
           },
 
-          writeTextFile: async (
-            params: WriteTextFileRequest
-          ): Promise<WriteTextFileResponse> => {
+          writeTextFile: async (params) => {
             await fs.writeFile(params.path, params.content, "utf-8")
             return {}
           },
 
-          createTerminal: async (
-            _params: CreateTerminalRequest
-          ): Promise<CreateTerminalResponse> => {
+          createTerminal: async () => {
             console.warn("[acapa] TODO: createTerminal not yet implemented")
             return { terminalId: `stub-${Date.now()}` }
           },
 
-          terminalOutput: async (
-            _params: TerminalOutputRequest
-          ): Promise<TerminalOutputResponse> => {
+          terminalOutput: async () => {
             console.warn("[acapa] TODO: terminalOutput not yet implemented")
             return { output: "", truncated: false }
           },
 
-          waitForTerminalExit: async (
-            _params: WaitForTerminalExitRequest
-          ): Promise<WaitForTerminalExitResponse> => {
+          waitForTerminalExit: async () => {
             console.warn("[acapa] TODO: waitForTerminalExit not yet implemented")
             return { exitCode: 0 }
           },
 
-          killTerminal: async (
-            _params: KillTerminalCommandRequest
-          ): Promise<KillTerminalCommandResponse> => {
+          killTerminal: async () => {
             console.warn("[acapa] TODO: killTerminal not yet implemented")
             return {}
           },
 
-          releaseTerminal: async (
-            _params: ReleaseTerminalRequest
-          ): Promise<ReleaseTerminalResponse> => {
+          releaseTerminal: async () => {
             console.warn("[acapa] TODO: releaseTerminal not yet implemented")
             return {}
           },
@@ -147,17 +114,21 @@ export class AcpClient extends Context.Tag("@acapa/AcpClient")<
       }
 
       const connect = Effect.fn("AcpClient.connect")(
-        function* (sessionId: string, cwd: string) {
+        function* (sessionId: string, cwd: string, agentType: string) {
           // If already connected, disconnect first
           if (connections.has(sessionId)) {
             yield* disconnect(sessionId)
           }
 
           const effectiveCwd = cwd === "~" ? process.env.HOME || "/" : cwd
-          const binPath = path.resolve(
-            process.cwd(),
-            "node_modules/.bin/claude-code-acp"
-          )
+          const providerName = PROVIDERS[agentType]?.name ?? agentType
+          const binPath = yield* Effect.try({
+            try: () => resolveProviderBin(agentType),
+            catch: (err) =>
+              new AcpConnectionError({
+                message: `${providerName}: ${err instanceof Error ? err.message : String(err)}`,
+              }),
+          })
 
           const proc = yield* Effect.try({
             try: () =>
@@ -168,7 +139,7 @@ export class AcpClient extends Context.Tag("@acapa/AcpClient")<
               }),
             catch: (err) =>
               new AcpConnectionError({
-                message: `Failed to spawn claude-code-acp: ${err}`,
+                message: `Failed to spawn ${providerName}: ${err}`,
               }),
           })
 
@@ -179,8 +150,8 @@ export class AcpClient extends Context.Tag("@acapa/AcpClient")<
             })
           }
 
-          const writableWeb = nodeToWebWritable(proc.stdin as Writable)
-          const readableWeb = nodeToWebReadable(proc.stdout as Readable)
+          const writableWeb = nodeToWebWritable(proc.stdin!)
+          const readableWeb = nodeToWebReadable(proc.stdout!)
           const stream = ndJsonStream(
             writableWeb as unknown as WritableStream<Uint8Array>,
             readableWeb as unknown as ReadableStream<Uint8Array>
@@ -290,8 +261,6 @@ export class AcpClient extends Context.Tag("@acapa/AcpClient")<
                 conn.sseController.enqueue(doneEvent)
                 conn.sseController.close()
               }
-              conn.sseController = null
-              conn.prompting = false
             })
             .catch((err) => {
               if (conn.sseController) {
@@ -299,6 +268,8 @@ export class AcpClient extends Context.Tag("@acapa/AcpClient")<
                 conn.sseController.enqueue(errorEvent)
                 conn.sseController.close()
               }
+            })
+            .finally(() => {
               conn.sseController = null
               conn.prompting = false
             })

@@ -8,6 +8,7 @@ interface Session {
   id: string
   name: string
   cwd: string
+  agent_type: string
   agent_session_id: string | null
   created_at: number
   connected?: boolean
@@ -55,8 +56,12 @@ export default function SessionLayout() {
     })
   }, [fetchSessions])
 
-  const handleCreate = async () => {
-    const res = await fetch("/api/sessions", { method: "POST" })
+  const handleCreate = async (agentType?: string) => {
+    const res = await fetch("/api/sessions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ agent_type: agentType }),
+    })
     const session: Session = await res.json()
     setSessions((prev) => [...prev, session])
     setActiveSessionId(session.id)

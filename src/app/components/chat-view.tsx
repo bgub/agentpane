@@ -45,6 +45,7 @@ export default function ChatView({
   const scrollRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const abortRef = useRef<AbortController | null>(null)
+  const accumulatedRef = useRef("")
 
   // Auto-scroll to bottom
   useEffect(() => {
@@ -74,7 +75,7 @@ export default function ChatView({
   }, [sessionId])
 
   // Ensure agent is connected (auto-connect if not)
-  const ensureConnected = useCallback(async (): Promise<boolean> => {
+  const ensureConnected = useCallback(async (): Promise<string | true> => {
     if (connected) return true
     setConnecting(true)
     try {
@@ -85,9 +86,10 @@ export default function ChatView({
         onConnectionChange?.(sessionId, true)
         return true
       }
-      return false
+      const body = await res.json().catch(() => ({ error: "Unknown error" }))
+      return body.error || "Connection failed"
     } catch {
-      return false
+      return "Network error"
     } finally {
       setConnecting(false)
     }
@@ -105,15 +107,16 @@ export default function ChatView({
       if (!trimmed || prompting) return
 
       // Ensure agent is connected before prompting
-      const isConnected = await ensureConnected()
-      if (!isConnected) {
-        setStreamingText("Error: Failed to connect to agent. Try again.")
+      const connectResult = await ensureConnected()
+      if (connectResult !== true) {
+        setStreamingText(`Error: ${connectResult}`)
         return
       }
 
       setInput("")
       setPrompting(true)
       setStreamingText("")
+      accumulatedRef.current = ""
 
       // Add user turn optimistically
       const userTurn: TurnData = {
@@ -160,7 +163,6 @@ export default function ChatView({
 
         const decoder = new TextDecoder()
         let buffer = ""
-        let accumulated = ""
 
         while (true) {
           const { done, value } = await reader.read()
@@ -178,11 +180,11 @@ export default function ChatView({
                 data.sessionUpdate === "agent_message_chunk" &&
                 data.content?.type === "text"
               ) {
-                accumulated += data.content.text
-                setStreamingText(accumulated)
+                accumulatedRef.current += data.content.text
+                setStreamingText(accumulatedRef.current)
               } else if (data.sessionUpdate === "done") {
                 // Finalize: add assistant turn to turns array
-                if (accumulated) {
+                if (accumulatedRef.current) {
                   const assistantTurn: TurnData = {
                     id: `temp-assistant-${Date.now()}`,
                     session_id: sessionId,
@@ -194,7 +196,7 @@ export default function ChatView({
                         id: `temp-ablock-${Date.now()}`,
                         turn_id: `temp-assistant-${Date.now()}`,
                         kind: "text",
-                        content: accumulated,
+                        content: accumulatedRef.current,
                         created_at: Date.now(),
                       },
                     ],
@@ -215,7 +217,7 @@ export default function ChatView({
       } catch (err) {
         if (err instanceof DOMException && err.name === "AbortError") {
           // User cancelled
-          if (streamingText) {
+          if (accumulatedRef.current) {
             const assistantTurn: TurnData = {
               id: `temp-cancelled-${Date.now()}`,
               session_id: sessionId,
@@ -227,7 +229,7 @@ export default function ChatView({
                   id: `temp-cblock-${Date.now()}`,
                   turn_id: `temp-cancelled-${Date.now()}`,
                   kind: "text",
-                  content: streamingText + "\n\n[cancelled]",
+                  content: accumulatedRef.current + "\n\n[cancelled]",
                   created_at: Date.now(),
                 },
               ],
@@ -241,7 +243,7 @@ export default function ChatView({
         setPrompting(false)
       }
     },
-    [prompting, sessionId, streamingText, ensureConnected]
+    [prompting, sessionId, ensureConnected]
   )
 
   const handleKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {

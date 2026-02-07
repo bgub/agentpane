@@ -3,13 +3,14 @@ import type { SqlError } from "@effect/sql/SqlError"
 import { Context, Effect, Layer } from "effect"
 import * as crypto from "node:crypto"
 import { Session, Turn, MessageBlock, SessionNotFoundError } from "./schema"
+import { DEFAULT_PROVIDER } from "./providers"
 
 export class SessionRepo extends Context.Tag("@acapa/SessionRepo")<
   SessionRepo,
   {
     readonly list: () => Effect.Effect<ReadonlyArray<Session>, SqlError>
     readonly get: (id: string) => Effect.Effect<Session, SqlError | SessionNotFoundError>
-    readonly create: (name?: string) => Effect.Effect<Session, SqlError>
+    readonly create: (name?: string, agentType?: string) => Effect.Effect<Session, SqlError>
     readonly remove: (id: string) => Effect.Effect<void, SqlError>
     readonly rename: (id: string, name: string) => Effect.Effect<Session, SqlError | SessionNotFoundError>
     readonly updateCwd: (id: string, cwd: string) => Effect.Effect<void, SqlError>
@@ -44,27 +45,28 @@ export class SessionRepo extends Context.Tag("@acapa/SessionRepo")<
       const sql = yield* SqlClient
 
       const list = Effect.fn("SessionRepo.list")(function* () {
-        return yield* sql<Session>`SELECT id, name, cwd, agent_session_id, created_at FROM sessions ORDER BY created_at`
+        return yield* sql<Session>`SELECT id, name, cwd, agent_type, agent_session_id, created_at FROM sessions ORDER BY created_at`
       })
 
       const get = Effect.fn("SessionRepo.get")(function* (id: string) {
-        const rows = yield* sql<Session>`SELECT id, name, cwd, agent_session_id, created_at FROM sessions WHERE id = ${id}`
+        const rows = yield* sql<Session>`SELECT id, name, cwd, agent_type, agent_session_id, created_at FROM sessions WHERE id = ${id}`
         if (rows.length === 0) {
           return yield* new SessionNotFoundError({ id })
         }
         return rows[0]
       })
 
-      const create = Effect.fn("SessionRepo.create")(function* (name?: string) {
+      const create = Effect.fn("SessionRepo.create")(function* (name?: string, agentType?: string) {
         const id = crypto.randomUUID()
         const now = Date.now()
         const counts = yield* sql<{ cnt: number }>`SELECT COUNT(*) as cnt FROM sessions`
         const sessionName = name || `Session ${(counts[0]?.cnt ?? 0) + 1}`
         const home = process.env.HOME || "~"
+        const provider = agentType || DEFAULT_PROVIDER
         const rows = yield* sql<Session>`
-          INSERT INTO sessions (id, name, cwd, agent_session_id, created_at)
-          VALUES (${id}, ${sessionName}, ${home}, ${null}, ${now})
-          RETURNING id, name, cwd, agent_session_id, created_at
+          INSERT INTO sessions (id, name, cwd, agent_type, agent_session_id, created_at)
+          VALUES (${id}, ${sessionName}, ${home}, ${provider}, ${null}, ${now})
+          RETURNING id, name, cwd, agent_type, agent_session_id, created_at
         `
         return rows[0]
       })
@@ -76,7 +78,7 @@ export class SessionRepo extends Context.Tag("@acapa/SessionRepo")<
       const rename = Effect.fn("SessionRepo.rename")(function* (id: string, name: string) {
         const rows = yield* sql<Session>`
           UPDATE sessions SET name = ${name} WHERE id = ${id}
-          RETURNING id, name, cwd, agent_session_id, created_at
+          RETURNING id, name, cwd, agent_type, agent_session_id, created_at
         `
         if (rows.length === 0) {
           return yield* new SessionNotFoundError({ id })

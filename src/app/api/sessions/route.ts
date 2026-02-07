@@ -27,10 +27,10 @@ export async function POST(request: Request) {
     Effect.gen(function* () {
       const repo = yield* SessionRepo
       const acp = yield* AcpClient
-      const session = yield* repo.create(body.name)
+      const session = yield* repo.create(body.name, body.agent_type)
       // Auto-connect agent (ignore connection failures)
       yield* acp
-        .connect(session.id, session.cwd)
+        .connect(session.id, session.cwd, session.agent_type)
         .pipe(Effect.catchAll(() => Effect.void))
       const connected = yield* acp.isConnected(session.id)
       return { ...session, connected, prompting: false }

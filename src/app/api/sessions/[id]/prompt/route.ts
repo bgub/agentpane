@@ -21,6 +21,13 @@ export async function POST(
       const repo = yield* SessionRepo
       const acp = yield* AcpClient
 
+      // Auto-connect if agent isn't running
+      const connected = yield* acp.isConnected(id)
+      if (!connected) {
+        const session = yield* repo.get(id)
+        yield* acp.connect(id, session.cwd, session.agent_type)
+      }
+
       // Create user turn with message block in DB
       const userTurn = yield* repo.addTurn(id, "user")
       yield* repo.addMessageBlock(userTurn.id, "text", content)
@@ -39,6 +46,9 @@ export async function POST(
   return Exit.match(exit, {
     onFailure: (cause) => {
       if (cause._tag === "Fail") {
+        if (cause.error._tag === "SessionNotFoundError") {
+          return Response.json({ error: "Session not found" }, { status: 404 })
+        }
         if (cause.error._tag === "AcpConnectionError") {
           return Response.json({ error: cause.error.message }, { status: 502 })
         }
@@ -73,24 +83,14 @@ export async function POST(
                     accumulatedText += data.content.text
                   } else if (data.sessionUpdate === "done") {
                     // Persist accumulated text and complete turn
-                    if (accumulatedText) {
-                      await AppRuntime.runPromise(
-                        Effect.flatMap(SessionRepo, (repo) =>
-                          repo.addMessageBlock(
-                            assistantTurnId,
-                            "text",
-                            accumulatedText
-                          )
-                        )
-                      )
-                    }
                     await AppRuntime.runPromise(
-                      Effect.flatMap(SessionRepo, (repo) =>
-                        repo.completeTurn(
-                          assistantTurnId,
-                          data.stopReason || "end_turn"
-                        )
-                      )
+                      Effect.gen(function* () {
+                        const repo = yield* SessionRepo
+                        if (accumulatedText) {
+                          yield* repo.addMessageBlock(assistantTurnId, "text", accumulatedText)
+                        }
+                        yield* repo.completeTurn(assistantTurnId, data.stopReason || "end_turn")
+                      })
                     )
                   } else if (
                     data.sessionUpdate === "tool_call" ||

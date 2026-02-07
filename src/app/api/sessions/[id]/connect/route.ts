@@ -14,7 +14,7 @@ export async function POST(
       const repo = yield* SessionRepo
       const acp = yield* AcpClient
       const session = yield* repo.get(id)
-      return yield* acp.connect(id, session.cwd)
+      return yield* acp.connect(id, session.cwd, session.agent_type)
     })
   )
   return Exit.match(exit, {
