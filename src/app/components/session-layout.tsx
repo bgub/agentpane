@@ -102,18 +102,11 @@ export default function SessionLayout({ initialSessions }: SessionLayoutProps) {
     return () => clearInterval(interval)
   }, [])
 
-  const handleCreate = async (agentType?: string) => {
-    const res = await fetch("/api/sessions", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ agent_type: agentType }),
-    })
+  const handleCreate = async () => {
+    const res = await fetch("/api/sessions", { method: "POST" })
     const session: Session = await res.json()
     setSessions((prev) => [...prev, session])
     setActiveSessionId(session.id)
-    if (session.connected) {
-      setConnectedSessionIds((prev) => new Set([...prev, session.id]))
-    }
   }
 
   const handleDelete = async (id: string) => {
@@ -160,13 +153,21 @@ export default function SessionLayout({ initialSessions }: SessionLayoutProps) {
   )
 
   const handleConnectionChange = useCallback(
-    (sessionId: string, connected: boolean) => {
+    (sessionId: string, connected: boolean, config?: { cwd: string; agent_type: string }) => {
       setConnectedSessionIds((prev) => {
         const next = new Set(prev)
         if (connected) next.add(sessionId)
         else next.delete(sessionId)
         return next
       })
+      // Update session config if provided (from setup screen)
+      if (config) {
+        setSessions((prev) =>
+          prev.map((s) =>
+            s.id === sessionId ? { ...s, cwd: config.cwd, agent_type: config.agent_type } : s
+          )
+        )
+      }
     },
     []
   )
@@ -200,6 +201,7 @@ export default function SessionLayout({ initialSessions }: SessionLayoutProps) {
             <ChatView
               sessionId={session.id}
               cwd={session.cwd}
+              agentType={session.agent_type}
               active={session.id === activeSessionId}
               connected={connectedSessionIds.has(session.id)}
               onPromptingChange={handlePromptingChange}

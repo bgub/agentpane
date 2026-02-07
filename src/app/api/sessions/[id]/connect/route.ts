@@ -5,15 +5,25 @@ import { Effect, Exit } from "effect"
 import type { NextRequest } from "next/server"
 
 export async function POST(
-  _request: NextRequest,
+  request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params
+  const body = await request.json().catch(() => ({}))
+
   const exit = await AppRuntime.runPromiseExit(
     Effect.gen(function* () {
       const repo = yield* SessionRepo
       const acp = yield* AcpClient
-      const session = yield* repo.get(id)
+
+      // If agent_type and cwd provided, update session config first
+      let session
+      if (body.agent_type && body.cwd) {
+        session = yield* repo.updateConfig(id, body.agent_type, body.cwd)
+      } else {
+        session = yield* repo.get(id)
+      }
+
       return yield* acp.connect(id, session.cwd, session.agent_type)
     })
   )

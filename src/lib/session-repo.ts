@@ -3,7 +3,6 @@ import type { SqlError } from "@effect/sql/SqlError"
 import { Context, Effect, Layer } from "effect"
 import * as crypto from "node:crypto"
 import { Session, Turn, MessageBlock, SessionNotFoundError } from "./schema"
-import { DEFAULT_PROVIDER } from "./providers"
 
 export class SessionRepo extends Context.Tag("@acapa/SessionRepo")<
   SessionRepo,
@@ -14,6 +13,11 @@ export class SessionRepo extends Context.Tag("@acapa/SessionRepo")<
     readonly remove: (id: string) => Effect.Effect<void, SqlError>
     readonly rename: (id: string, name: string) => Effect.Effect<Session, SqlError | SessionNotFoundError>
     readonly updateCwd: (id: string, cwd: string) => Effect.Effect<void, SqlError>
+    readonly updateConfig: (
+      id: string,
+      agentType: string,
+      cwd: string
+    ) => Effect.Effect<Session, SqlError | SessionNotFoundError>
     readonly updateAgentSessionId: (
       id: string,
       agentSessionId: string | null
@@ -62,7 +66,7 @@ export class SessionRepo extends Context.Tag("@acapa/SessionRepo")<
         const counts = yield* sql<{ cnt: number }>`SELECT COUNT(*) as cnt FROM sessions`
         const sessionName = name || `Session ${(counts[0]?.cnt ?? 0) + 1}`
         const home = process.env.HOME || "~"
-        const provider = agentType || DEFAULT_PROVIDER
+        const provider = agentType || ""
         const rows = yield* sql<Session>`
           INSERT INTO sessions (id, name, cwd, agent_type, agent_session_id, created_at)
           VALUES (${id}, ${sessionName}, ${home}, ${provider}, ${null}, ${now})
@@ -89,6 +93,19 @@ export class SessionRepo extends Context.Tag("@acapa/SessionRepo")<
       const updateCwd = Effect.fn("SessionRepo.updateCwd")(function* (id: string, cwd: string) {
         yield* sql`UPDATE sessions SET cwd = ${cwd} WHERE id = ${id}`
       })
+
+      const updateConfig = Effect.fn("SessionRepo.updateConfig")(
+        function* (id: string, agentType: string, cwd: string) {
+          const rows = yield* sql<Session>`
+            UPDATE sessions SET agent_type = ${agentType}, cwd = ${cwd} WHERE id = ${id}
+            RETURNING id, name, cwd, agent_type, agent_session_id, created_at
+          `
+          if (rows.length === 0) {
+            return yield* new SessionNotFoundError({ id })
+          }
+          return rows[0]
+        }
+      )
 
       const updateAgentSessionId = Effect.fn("SessionRepo.updateAgentSessionId")(
         function* (id: string, agentSessionId: string | null) {
@@ -165,6 +182,7 @@ export class SessionRepo extends Context.Tag("@acapa/SessionRepo")<
         remove,
         rename,
         updateCwd,
+        updateConfig,
         updateAgentSessionId,
         addTurn,
         completeTurn,

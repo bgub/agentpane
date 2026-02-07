@@ -1,9 +1,10 @@
 "use client"
 
 import { useState, useRef, useEffect, useCallback, type KeyboardEvent } from "react"
-import { Square, Check, X, Loader2, Terminal, FileText, Search, Brain, Pencil } from "lucide-react"
+import { Square, Check, X, Loader2, Terminal, FileText, Search, Brain, Pencil, FolderOpen } from "lucide-react"
 import { Streamdown } from "streamdown"
 import { code } from "@streamdown/code"
+import { PROVIDERS } from "./providers"
 
 interface TurnData {
   id: string
@@ -25,10 +26,11 @@ interface BlockData {
 interface ChatViewProps {
   sessionId: string
   cwd: string
+  agentType: string
   active: boolean
   connected: boolean
   onPromptingChange?: (sessionId: string, prompting: boolean) => void
-  onConnectionChange?: (sessionId: string, connected: boolean) => void
+  onConnectionChange?: (sessionId: string, connected: boolean, config?: { cwd: string; agent_type: string }) => void
 }
 
 interface ToolCallState {
@@ -236,9 +238,105 @@ function applyEventToBlocks(
   return [...blocks]
 }
 
+function SessionSetup({
+  sessionId,
+  defaultCwd,
+  onStart,
+}: {
+  sessionId: string
+  defaultCwd: string
+  onStart: (agentType: string, cwd: string) => void
+}) {
+  const [selectedProvider, setSelectedProvider] = useState<string | null>(null)
+  const [cwdValue, setCwdValue] = useState(defaultCwd)
+  const inputRef = useRef<HTMLInputElement>(null)
+
+  const handleStart = () => {
+    if (!selectedProvider) return
+    onStart(selectedProvider, cwdValue.trim() || defaultCwd)
+  }
+
+  const handleKeyDown = (e: KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === "Enter" && selectedProvider) {
+      e.preventDefault()
+      handleStart()
+    }
+  }
+
+  return (
+    <div className="flex h-full flex-col bg-[var(--t-bg)]">
+      <div className="flex-1 flex items-center justify-center">
+        <div className="w-full max-w-md px-6 space-y-6">
+          {/* Provider cards */}
+          <div className="space-y-2">
+            <div className="text-xs font-medium text-[var(--t-muted)] uppercase tracking-wider">Agent</div>
+            <div className="grid grid-cols-2 gap-3">
+              {PROVIDERS.map((p) => {
+                const selected = selectedProvider === p.id
+                return (
+                  <button
+                    key={p.id}
+                    onClick={() => setSelectedProvider(p.id)}
+                    className={`group relative text-left rounded-lg border px-4 py-3.5 transition-all cursor-pointer ${
+                      selected
+                        ? "border-[var(--t-accent)] bg-[var(--t-accent)]/8"
+                        : "border-[var(--t-border)] bg-[var(--t-surface)] hover:border-[var(--t-dim)] hover:bg-[var(--t-elevated)]"
+                    }`}
+                  >
+                    <div className={`text-sm font-medium ${selected ? "text-[var(--t-accent)]" : "text-[var(--t-bright)]"}`}>
+                      {p.name}
+                    </div>
+                    <div className="text-[11px] text-[var(--t-muted)] mt-0.5 leading-snug">
+                      {p.description}
+                    </div>
+                    {selected && (
+                      <div className="absolute top-2.5 right-2.5 size-2 rounded-full bg-[var(--t-accent)]" />
+                    )}
+                  </button>
+                )
+              })}
+            </div>
+          </div>
+
+          {/* Working directory */}
+          <div className="space-y-2">
+            <div className="text-xs font-medium text-[var(--t-muted)] uppercase tracking-wider">Working directory</div>
+            <div className="flex items-center gap-2 rounded-lg border border-[var(--t-border)] bg-[var(--t-surface)] px-3 py-2 focus-within:border-[var(--t-dim)]">
+              <FolderOpen className="size-3.5 shrink-0 text-[var(--t-muted)]" />
+              <input
+                ref={inputRef}
+                value={cwdValue}
+                onChange={(e) => setCwdValue(e.target.value)}
+                onKeyDown={handleKeyDown}
+                className="flex-1 bg-transparent text-sm text-[var(--t-bright)] outline-none placeholder:text-[var(--t-dim)] font-mono"
+                placeholder="~/projects/my-app"
+                spellCheck={false}
+              />
+            </div>
+          </div>
+
+          {/* Start button */}
+          <button
+            onClick={handleStart}
+            disabled={!selectedProvider}
+            className={`w-full rounded-lg py-2.5 text-sm font-medium transition-all ${
+              selectedProvider
+                ? "bg-[var(--t-accent)] text-[var(--t-bg)] hover:brightness-110 cursor-pointer"
+                : "bg-[var(--t-border)] text-[var(--t-dim)] cursor-not-allowed"
+            }`}
+          >
+            Start session
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 export default function ChatView({
   sessionId,
   cwd,
+  agentType,
   active,
   connected,
   onPromptingChange,
@@ -378,6 +476,27 @@ export default function ChatView({
     }
   }, [connected, sessionId, onConnectionChange])
 
+  const handleSetupStart = useCallback(
+    async (selectedAgentType: string, selectedCwd: string) => {
+      setConnecting(true)
+      try {
+        const res = await fetch(`/api/sessions/${sessionId}/connect`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ agent_type: selectedAgentType, cwd: selectedCwd }),
+        })
+        if (res.ok) {
+          onConnectionChange?.(sessionId, true, { cwd: selectedCwd, agent_type: selectedAgentType })
+        }
+      } catch {
+        // Connection failed — will show as disconnected
+      } finally {
+        setConnecting(false)
+      }
+    },
+    [sessionId, onConnectionChange]
+  )
+
   const cancelPrompt = useCallback(() => {
     fetch(`/api/sessions/${sessionId}/cancel`, { method: "POST" }).catch(() => {})
   }, [sessionId])
@@ -451,6 +570,21 @@ export default function ChatView({
       textareaRef.current.style.height = "auto"
       textareaRef.current.style.height = `${Math.min(textareaRef.current.scrollHeight, 200)}px`
     }
+  }
+
+  // Show setup screen for unconfigured sessions
+  if (!agentType) {
+    if (connecting) {
+      return (
+        <div className="flex h-full items-center justify-center bg-[var(--t-bg)]">
+          <div className="flex items-center gap-2.5 text-sm text-[var(--t-muted)]">
+            <Loader2 className="size-4 animate-spin text-[var(--t-accent)]" />
+            Connecting to agent...
+          </div>
+        </div>
+      )
+    }
+    return <SessionSetup sessionId={sessionId} defaultCwd={cwd} onStart={handleSetupStart} />
   }
 
   return (

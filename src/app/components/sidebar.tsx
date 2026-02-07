@@ -9,6 +9,7 @@ import {
 } from "@/components/ui/dropdown-menu"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { EllipsisVertical, Plus } from "lucide-react"
+import { PROVIDER_INFO } from "./providers"
 
 interface Session {
   id: string
@@ -24,7 +25,7 @@ interface SidebarProps {
   connectedSessionIds: Set<string>
   promptingSessionIds: Set<string>
   onSelect: (id: string) => void
-  onCreate: (agentType?: string) => void
+  onCreate: () => void
   onDelete: (id: string) => void
   onRename: (id: string, name: string) => void
 }
@@ -82,24 +83,13 @@ export default function Sidebar({
       {/* Header */}
       <div className="flex h-10 shrink-0 items-center justify-between px-3 border-b border-[var(--t-border)]">
         <span className="text-xs font-medium text-[var(--t-muted)]">Sessions</span>
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <button
-              className="rounded p-1 text-[var(--t-muted)] hover:bg-[var(--t-elevated)] hover:text-[var(--t-bright)] transition-colors cursor-pointer"
-              title="New session"
-            >
-              <Plus className="size-3.5" />
-            </button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" side="bottom" className="min-w-36">
-            <DropdownMenuItem onClick={() => onCreate("claude-code")}>
-              Claude Code
-            </DropdownMenuItem>
-            <DropdownMenuItem onClick={() => onCreate("codex")}>
-              Codex
-            </DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
+        <button
+          onClick={() => onCreate()}
+          className="rounded p-1 text-[var(--t-muted)] hover:bg-[var(--t-elevated)] hover:text-[var(--t-bright)] transition-colors cursor-pointer"
+          title="New session"
+        >
+          <Plus className="size-3.5" />
+        </button>
       </div>
 
       {/* Session list */}
@@ -131,9 +121,11 @@ export default function Sidebar({
                   <>
                     {statusDot(session.id)}
                     <span className="flex-1 truncate">{session.name}</span>
-                    <span className="shrink-0 text-[10px] font-mono font-medium tracking-wide text-[var(--t-muted)]">
-                      {session.agent_type === "claude-code" ? "CLAUDE" : session.agent_type.toUpperCase()}
-                    </span>
+                    {session.agent_type && (
+                      <span className="shrink-0 text-[10px] font-mono font-medium tracking-wide text-[var(--t-muted)]">
+                        {PROVIDER_INFO[session.agent_type]?.shortLabel ?? session.agent_type.toUpperCase()}
+                      </span>
+                    )}
                     <DropdownMenu>
                       <DropdownMenuTrigger asChild>
                         <button
