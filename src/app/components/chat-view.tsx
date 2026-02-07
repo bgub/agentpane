@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, useRef, useEffect, useCallback, type KeyboardEvent } from "react"
-import { Send, Square } from "lucide-react"
+import { Square } from "lucide-react"
 
 interface TurnData {
   id: string
@@ -26,6 +26,37 @@ interface ChatViewProps {
   connected: boolean
   onPromptingChange?: (sessionId: string, prompting: boolean) => void
   onConnectionChange?: (sessionId: string, connected: boolean) => void
+}
+
+function ToolCallBlock({ block }: { block: BlockData }) {
+  const [expanded, setExpanded] = useState(false)
+  let toolInfo: { toolName?: string; input?: Record<string, unknown> } = {}
+  try {
+    toolInfo = JSON.parse(block.content)
+  } catch { /* ignore */ }
+
+  const toolName = toolInfo.toolName || block.kind
+  const hasInput = toolInfo.input && Object.keys(toolInfo.input).length > 0
+
+  return (
+    <div className="my-1.5">
+      <button
+        onClick={() => hasInput && setExpanded(!expanded)}
+        className={`flex items-center gap-1.5 text-xs font-mono transition-colors ${hasInput ? "cursor-pointer hover:text-[var(--t-bright)]" : "cursor-default"}`}
+        style={{ color: 'var(--t-blue)' }}
+      >
+        <span className="text-[var(--t-dim)]">{expanded ? "▾" : "▸"}</span>
+        <span>{toolName}</span>
+      </button>
+      {expanded && hasInput && (
+        <pre
+          className="mt-1 ml-4 text-xs leading-relaxed font-mono overflow-x-auto whitespace-pre-wrap text-[var(--t-muted)]"
+        >
+          {JSON.stringify(toolInfo.input, null, 2)}
+        </pre>
+      )}
+    </div>
+  )
 }
 
 export default function ChatView({
@@ -266,94 +297,121 @@ export default function ChatView({
   }
 
   return (
-    <div className="flex h-full min-h-0 flex-col bg-zinc-950">
-      <div className="flex h-10 shrink-0 items-center border-b border-zinc-800 px-4">
-        <span className="text-zinc-400 text-xs">acapa</span>
+    <div className="flex h-full min-h-0 flex-col bg-[var(--t-bg)]">
+      {/* Top status bar */}
+      <div className="flex h-9 shrink-0 items-center justify-between px-4 bg-[var(--t-surface)] border-b border-[var(--t-border)]">
+        <span className="text-xs font-medium text-[var(--t-accent)]">acapa</span>
+        <div className="flex items-center gap-3 text-xs">
+          {prompting && (
+            <span className="flex items-center gap-1.5 text-[var(--t-amber)]">
+              <span className="size-1.5 rounded-full bg-[var(--t-amber)] animate-pulse" />
+              thinking
+            </span>
+          )}
+          <span className={`flex items-center gap-1.5 ${
+            connecting
+              ? "text-[var(--t-amber)]"
+              : connected
+                ? "text-[var(--t-green)]"
+                : "text-[var(--t-dim)]"
+          }`}>
+            <span className={`size-1.5 rounded-full ${
+              connecting
+                ? "bg-[var(--t-amber)] animate-pulse"
+                : connected
+                  ? "bg-[var(--t-green)]"
+                  : "bg-[var(--t-dim)]"
+            }`} />
+            {connecting ? "connecting" : connected ? "connected" : "disconnected"}
+          </span>
+        </div>
       </div>
 
+      {/* Message stream */}
       <div ref={scrollRef} className="flex-1 min-h-0 overflow-y-auto">
-        <div className="mx-auto max-w-3xl px-4 py-6 space-y-4">
+        <div className="max-w-3xl mx-auto px-5 py-6 space-y-1">
           {!loaded && (
-            <div className="text-zinc-600 text-sm">Loading conversation...</div>
+            <div className="text-sm text-[var(--t-muted)] py-2">Loading...</div>
           )}
 
           {turns.map((turn) => (
             <div key={turn.id}>
               {turn.role === "user" ? (
-                <div className="flex justify-end">
-                  <div className="max-w-[80%] rounded-2xl rounded-br-sm bg-blue-600 px-4 py-2.5 text-sm text-white whitespace-pre-wrap">
-                    {turn.blocks
-                      .filter((b) => b.kind === "text")
-                      .map((b) => b.content)
-                      .join("\n")}
+                /* User prompt — highlighted block */
+                <div className="mt-5 mb-3 -mx-3 px-3 py-2.5 rounded-lg bg-[var(--t-elevated)]">
+                  <div className="flex items-start gap-2.5">
+                    <span className="shrink-0 text-sm font-mono text-[var(--t-accent)] select-none leading-relaxed">&#10095;</span>
+                    <div className="text-sm leading-relaxed whitespace-pre-wrap text-[var(--t-white)]">
+                      {turn.blocks
+                        .filter((b) => b.kind === "text")
+                        .map((b) => b.content)
+                        .join("\n")}
+                    </div>
                   </div>
                 </div>
               ) : (
-                <div className="flex justify-start">
-                  <div className="max-w-[80%] space-y-2">
-                    {turn.blocks
-                      .filter((b) => b.kind === "text")
-                      .map((b) => (
-                        <div
-                          key={b.id}
-                          className="rounded-2xl rounded-bl-sm bg-zinc-800 px-4 py-2.5 text-sm text-zinc-200 whitespace-pre-wrap"
-                        >
-                          {b.content}
-                        </div>
-                      ))}
-                    {turn.blocks
-                      .filter(
-                        (b) =>
-                          b.kind === "tool_call" ||
-                          b.kind === "tool_call_update"
-                      )
-                      .map((b) => {
-                        let toolInfo: { toolName?: string } = {}
-                        try {
-                          toolInfo = JSON.parse(b.content)
-                        } catch { /* ignore */ }
-                        return (
-                          <div
-                            key={b.id}
-                            className="rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-xs text-zinc-400"
-                          >
-                            Tool: {toolInfo.toolName || b.kind}
-                          </div>
-                        )
-                      })}
-                  </div>
+                /* Assistant response */
+                <div className="py-1">
+                  {turn.blocks
+                    .filter((b) => b.kind === "text")
+                    .map((b) => (
+                      <div
+                        key={b.id}
+                        className="text-sm leading-[1.7] whitespace-pre-wrap text-[var(--t-text)] pl-5 border-l-2 border-[var(--t-border)]"
+                      >
+                        {b.content}
+                      </div>
+                    ))}
+                  {turn.blocks
+                    .filter(
+                      (b) =>
+                        b.kind === "tool_call" ||
+                        b.kind === "tool_call_update"
+                    )
+                    .map((b) => (
+                      <div key={b.id} className="pl-5 border-l-2 border-[var(--t-border)]">
+                        <ToolCallBlock block={b} />
+                      </div>
+                    ))}
+                  {turn.stop_reason && turn.stop_reason !== "end_turn" && (
+                    <div className="pl-5 mt-1 text-[11px] font-mono text-[var(--t-dim)]">
+                      [{turn.stop_reason}]
+                    </div>
+                  )}
                 </div>
               )}
             </div>
           ))}
 
-          {/* Streaming assistant message */}
+          {/* Streaming assistant output */}
           {streamingText && (
-            <div className="flex justify-start">
-              <div className="max-w-[80%] rounded-2xl rounded-bl-sm bg-zinc-800 px-4 py-2.5 text-sm text-zinc-200 whitespace-pre-wrap">
+            <div className="py-1">
+              <div className="text-sm leading-[1.7] whitespace-pre-wrap text-[var(--t-text)] pl-5 border-l-2 border-[var(--t-accent)]">
                 {streamingText}
-                <span className="inline-block w-1.5 h-4 ml-0.5 bg-zinc-400 animate-pulse align-text-bottom" />
+                <span className="inline-block ml-0.5 animate-block-blink text-[var(--t-accent)]">&#9608;</span>
               </div>
             </div>
           )}
 
-          {/* Prompting but no text yet */}
+          {/* Waiting for response */}
           {prompting && !streamingText && (
-            <div className="flex justify-start">
-              <div className="rounded-2xl rounded-bl-sm bg-zinc-800 px-4 py-2.5 text-sm text-zinc-500">
-                <span className="inline-flex gap-1">
-                  <span className="animate-bounce" style={{ animationDelay: "0ms" }}>.</span>
-                  <span className="animate-bounce" style={{ animationDelay: "150ms" }}>.</span>
-                  <span className="animate-bounce" style={{ animationDelay: "300ms" }}>.</span>
-                </span>
+            <div className="py-1">
+              <div className="text-sm text-[var(--t-muted)] pl-5 border-l-2 border-[var(--t-accent)]">
+                <span className="animate-pulse">...</span>
               </div>
             </div>
           )}
         </div>
       </div>
 
-      <div className="shrink-0 border-t border-zinc-800 px-4 py-3">
-        <div className="mx-auto max-w-3xl flex items-end gap-2">
+      {/* Input area */}
+      <div className="shrink-0 border-t border-[var(--t-border)] bg-[var(--t-surface)] px-5 py-3">
+        <div className="max-w-3xl mx-auto flex items-end gap-2.5">
+          <span className={`shrink-0 text-sm font-mono select-none leading-[1.625rem] ${
+            prompting ? "text-[var(--t-dim)]" : "text-[var(--t-accent)]"
+          }`}>
+            &#10095;
+          </span>
           <textarea
             ref={textareaRef}
             value={input}
@@ -361,27 +419,29 @@ export default function ChatView({
             onKeyDown={handleKeyDown}
             disabled={prompting || connecting}
             rows={1}
-            className="flex-1 resize-none rounded-xl border border-zinc-700 bg-zinc-900 px-4 py-2.5 text-sm text-zinc-100 outline-none placeholder:text-zinc-600 focus:border-zinc-500 disabled:opacity-50"
-            placeholder={connecting ? "Connecting to agent..." : prompting ? "Agent is thinking..." : "Send a message..."}
+            className="flex-1 resize-none bg-transparent text-sm text-[var(--t-bright)] outline-none placeholder:text-[var(--t-dim)] disabled:opacity-40"
+            style={{ caretColor: 'var(--t-accent)' }}
+            placeholder={
+              connecting
+                ? "Connecting to agent..."
+                : prompting
+                  ? "Agent is thinking..."
+                  : "Send a message..."
+            }
             spellCheck={false}
           />
           {prompting ? (
             <button
               onClick={cancelPrompt}
-              className="shrink-0 rounded-xl bg-red-600 p-2.5 text-white hover:bg-red-500 transition-colors"
-              title="Stop"
+              className="shrink-0 rounded-md bg-[var(--t-red)]/15 p-2 text-[var(--t-red)] hover:bg-[var(--t-red)]/25 transition-colors cursor-pointer"
+              title="Stop (Esc)"
             >
-              <Square className="size-4" />
+              <Square className="size-3.5" />
             </button>
           ) : (
-            <button
-              onClick={() => sendPrompt(input)}
-              disabled={!input.trim()}
-              className="shrink-0 rounded-xl bg-blue-600 p-2.5 text-white hover:bg-blue-500 disabled:opacity-30 disabled:hover:bg-blue-600 transition-colors"
-              title="Send"
-            >
-              <Send className="size-4" />
-            </button>
+            <div className="shrink-0 text-[11px] text-[var(--t-dim)] leading-[1.625rem] select-none">
+              enter &#8629;
+            </div>
           )}
         </div>
       </div>

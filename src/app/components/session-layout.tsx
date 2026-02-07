@@ -127,14 +127,14 @@ export default function SessionLayout() {
 
   if (!initialized) {
     return (
-      <div className="flex h-screen items-center justify-center bg-zinc-950 text-zinc-500 font-mono text-sm">
+      <div className="flex h-screen items-center justify-center bg-[var(--t-bg)] text-[var(--t-muted)] text-sm">
         Loading...
       </div>
     )
   }
 
   return (
-    <div className="flex h-screen">
+    <div className="flex h-screen bg-[var(--t-bg)]">
       <Sidebar
         sessions={sessions}
         activeSessionId={activeSessionId}
@@ -161,8 +161,8 @@ export default function SessionLayout() {
           </div>
         ))}
         {sessions.length === 0 && (
-          <div className="flex h-full items-center justify-center bg-zinc-950 text-zinc-500 font-mono text-sm">
-            No session selected. Click + to create one.
+          <div className="flex h-full items-center justify-center text-[var(--t-muted)] text-sm">
+            No sessions. Click + to create one.
           </div>
         )}
       </div>

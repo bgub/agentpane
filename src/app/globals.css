@@ -6,6 +6,7 @@
 
 @theme inline {
   --font-mono: var(--font-geist-mono);
+  --font-sans: var(--font-geist-sans);
   --color-ring: var(--ring);
   --color-input: var(--input);
   --color-border: var(--border);
@@ -35,27 +36,48 @@
 
 :root {
   --radius: 0.625rem;
+
+  /* Core palette — warm dark with good legibility */
+  --t-bg: #101010;
+  --t-surface: #171717;
+  --t-elevated: #1e1e1e;
+  --t-border: #272727;
+  --t-dim: #4a4a4a;
+  --t-muted: #707070;
+  --t-text: #b0b0b0;
+  --t-bright: #cccccc;
+  --t-white: #dcdcdc;
+
+  /* Accent — soft warm amber */
+  --t-accent: #c49a6c;
+  --t-accent-dim: #9a7a55;
+
+  /* Semantic status colors */
+  --t-green: #6aad7a;
+  --t-amber: #d4a04e;
+  --t-blue: #6a9ec4;
+  --t-red: #c46a6a;
 }
 
 .dark {
-  --background: oklch(0.141 0.005 285.823);
-  --foreground: oklch(0.985 0 0);
-  --card: oklch(0.21 0.006 285.885);
-  --card-foreground: oklch(0.985 0 0);
-  --popover: oklch(0.21 0.006 285.885);
-  --popover-foreground: oklch(0.985 0 0);
-  --primary: oklch(0.92 0.004 286.32);
-  --primary-foreground: oklch(0.21 0.006 285.885);
-  --secondary: oklch(0.274 0.006 286.033);
-  --secondary-foreground: oklch(0.985 0 0);
-  --muted: oklch(0.274 0.006 286.033);
-  --muted-foreground: oklch(0.705 0.015 286.067);
-  --accent: oklch(0.274 0.006 286.033);
-  --accent-foreground: oklch(0.985 0 0);
-  --destructive: oklch(0.704 0.191 22.216);
-  --border: oklch(1 0 0 / 10%);
-  --input: oklch(1 0 0 / 15%);
-  --ring: oklch(0.552 0.016 285.938);
+  --background: var(--t-bg);
+  --foreground: var(--t-text);
+  --card: var(--t-surface);
+  --card-foreground: var(--t-text);
+  --popover: var(--t-surface);
+  --popover-foreground: var(--t-text);
+  --primary: var(--t-accent);
+  --primary-foreground: var(--t-bg);
+  --secondary: var(--t-border);
+  --secondary-foreground: var(--t-text);
+  --muted: var(--t-border);
+  --muted-foreground: var(--t-muted);
+  --accent: var(--t-border);
+  --accent-foreground: var(--t-text);
+  --destructive: var(--t-red);
+  --border: var(--t-border);
+  --input: var(--t-border);
+  --ring: var(--t-accent-dim);
 }
 
 @layer base {
@@ -67,3 +89,26 @@
   }
 }
 
+/* Block cursor blink */
+@keyframes block-blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
+}
+.animate-block-blink {
+  animation: block-blink 1s steps(1) infinite;
+}
+
+/* Scrollbar styling */
+::-webkit-scrollbar {
+  width: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--t-dim);
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--t-muted);
+}

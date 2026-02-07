@@ -70,28 +70,26 @@ export default function Sidebar({
 
   const statusDot = (sessionId: string) => {
     if (promptingSessionIds.has(sessionId)) {
-      // Amber pulsing: agent processing a prompt
-      return <span className="shrink-0 size-1.5 rounded-full bg-amber-400 animate-pulse" />
+      return <span className="shrink-0 size-2 rounded-full bg-[var(--t-amber)] animate-pulse" />
     }
     if (connectedSessionIds.has(sessionId)) {
-      // Green: agent connected, idle
-      return <span className="shrink-0 size-1.5 rounded-full bg-green-400" />
+      return <span className="shrink-0 size-2 rounded-full bg-[var(--t-green)]" />
     }
-    // Gray: not connected
-    return <span className="shrink-0 size-1.5 rounded-full bg-zinc-600" />
+    return <span className="shrink-0 size-2 rounded-full bg-[var(--t-dim)]" />
   }
 
   return (
-    <div className="flex h-full w-60 min-h-0 flex-col border-r border-zinc-800 bg-zinc-950">
-      <div className="flex h-10 shrink-0 items-center justify-between border-b border-zinc-800 px-3">
-        <span className="text-xs text-zinc-400 font-medium">Sessions</span>
+    <div className="flex h-full w-56 min-h-0 flex-col bg-[var(--t-surface)] border-r border-[var(--t-border)]">
+      {/* Header */}
+      <div className="flex h-10 shrink-0 items-center justify-between px-3 border-b border-[var(--t-border)]">
+        <span className="text-xs font-medium text-[var(--t-muted)]">Sessions</span>
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <button
-              className="rounded px-1.5 py-0.5 text-zinc-400 hover:bg-zinc-800 hover:text-zinc-200 text-lg leading-none"
+              className="rounded p-1 text-[var(--t-muted)] hover:bg-[var(--t-elevated)] hover:text-[var(--t-bright)] transition-colors cursor-pointer"
               title="New session"
             >
-              <Plus className="size-4" />
+              <Plus className="size-3.5" />
             </button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" side="bottom" className="min-w-36">
@@ -105,70 +103,74 @@ export default function Sidebar({
         </DropdownMenu>
       </div>
 
+      {/* Session list */}
       <ScrollArea className="flex-1">
         <div className="py-1">
-          {sessions.map((session) => (
-            <div
-              key={session.id}
-              onClick={() => onSelect(session.id)}
-              className={`group flex items-center gap-2 px-3 py-1.5 cursor-pointer text-sm ${
-                session.id === activeSessionId
-                  ? "bg-zinc-800 text-zinc-100"
-                  : "text-zinc-400 hover:bg-zinc-900 hover:text-zinc-200"
-              }`}
-            >
-              {editingId === session.id ? (
-                <input
-                  ref={editInputRef}
-                  value={editValue}
-                  onChange={(e) => setEditValue(e.target.value)}
-                  onKeyDown={handleEditKeyDown}
-                  onBlur={commitRename}
-                  className="flex-1 bg-zinc-900 text-zinc-100 text-sm outline-none border border-zinc-700 rounded px-1"
-                  spellCheck={false}
-                />
-              ) : (
-                <>
-                  {statusDot(session.id)}
-                  <span className="flex-1 truncate">{session.name}</span>
-                  <span className="shrink-0 text-[10px] px-1 py-0.5 rounded bg-zinc-800 text-zinc-500 leading-none">
-                    {session.agent_type === "claude-code" ? "claude" : session.agent_type}
-                  </span>
-                  <DropdownMenu>
-                    <DropdownMenuTrigger asChild>
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        onClick={(e) => e.stopPropagation()}
-                        className="opacity-0 group-hover:opacity-100 data-[state=open]:opacity-100 size-6 cursor-pointer text-zinc-500 hover:text-zinc-300 hover:bg-zinc-700 data-[state=open]:bg-zinc-700 data-[state=open]:text-zinc-300"
-                      >
-                        <Ellipsis className="size-3.5" />
-                      </Button>
-                    </DropdownMenuTrigger>
-                    <DropdownMenuContent align="start" side="bottom" className="min-w-32">
-                      <DropdownMenuItem
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          startRename(session.id, session.name)
-                        }}
-                      >
-                        Rename
-                      </DropdownMenuItem>
-                      <DropdownMenuItem
-                        variant="destructive"
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          onDelete(session.id)
-                        }}
-                      >
-                        Delete
-                      </DropdownMenuItem>
-                    </DropdownMenuContent>
-                  </DropdownMenu>
-                </>
-              )}
-            </div>
-          ))}
+          {sessions.map((session) => {
+            const isActive = session.id === activeSessionId
+            return (
+              <div
+                key={session.id}
+                onClick={() => onSelect(session.id)}
+                className={`group flex items-center gap-2.5 px-3 py-2 cursor-pointer text-[13px] transition-colors ${
+                  isActive
+                    ? "bg-[var(--t-elevated)] text-[var(--t-white)] border-l-2 border-l-[var(--t-accent)]"
+                    : "text-[var(--t-text)] hover:bg-[var(--t-bg)] hover:text-[var(--t-bright)] border-l-2 border-l-transparent"
+                }`}
+              >
+                {editingId === session.id ? (
+                  <input
+                    ref={editInputRef}
+                    value={editValue}
+                    onChange={(e) => setEditValue(e.target.value)}
+                    onKeyDown={handleEditKeyDown}
+                    onBlur={commitRename}
+                    className="flex-1 bg-[var(--t-bg)] text-[var(--t-white)] text-[13px] outline-none border border-[var(--t-dim)] rounded px-1.5 py-0.5"
+                    spellCheck={false}
+                  />
+                ) : (
+                  <>
+                    {statusDot(session.id)}
+                    <span className="flex-1 truncate">{session.name}</span>
+                    <span className="shrink-0 text-[10px] font-mono text-[var(--t-dim)]">
+                      {session.agent_type === "claude-code" ? "cc" : session.agent_type}
+                    </span>
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          onClick={(e) => e.stopPropagation()}
+                          className="opacity-0 group-hover:opacity-100 data-[state=open]:opacity-100 size-6 cursor-pointer text-[var(--t-muted)] hover:text-[var(--t-bright)] hover:bg-[var(--t-dim)]/30 data-[state=open]:bg-[var(--t-dim)]/30 data-[state=open]:text-[var(--t-bright)]"
+                        >
+                          <Ellipsis className="size-3.5" />
+                        </Button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="start" side="bottom" className="min-w-32">
+                        <DropdownMenuItem
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            startRename(session.id, session.name)
+                          }}
+                        >
+                          Rename
+                        </DropdownMenuItem>
+                        <DropdownMenuItem
+                          variant="destructive"
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            onDelete(session.id)
+                          }}
+                        >
+                          Delete
+                        </DropdownMenuItem>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
+                  </>
+                )}
+              </div>
+            )
+          })}
         </div>
       </ScrollArea>
     </div>
