@@ -134,12 +134,9 @@ function parseToolCallBlock(block: BlockData): ToolCallState {
  * Returns blocks with only "text" and "tool_call" kinds, in original order.
  */
 function mergeToolCallUpdates(blocks: BlockData[]): BlockData[] {
-  // Build a map of toolCallId → merged state, keeping first occurrence
   const toolCalls = new Map<string, Record<string, unknown>>()
   const seenIds = new Set<string>()
 
-  // First pass: seed from first tool_call per ID, then merge all subsequent
-  // tool_call and tool_call_update blocks
   for (const b of blocks) {
     if (b.kind !== "tool_call" && b.kind !== "tool_call_update") continue
     try {
@@ -159,7 +156,6 @@ function mergeToolCallUpdates(blocks: BlockData[]): BlockData[] {
     } catch { /* ignore */ }
   }
 
-  // Second pass: keep text blocks and only the FIRST tool_call per ID
   return blocks
     .filter((b) => {
       if (b.kind === "tool_call_update") return false
@@ -186,6 +182,60 @@ function mergeToolCallUpdates(blocks: BlockData[]): BlockData[] {
     })
 }
 
+/** Apply a server event to streaming blocks (mutates blocksRef, returns new array for setState) */
+function applyEventToBlocks(
+  blocks: StreamingBlock[],
+  data: Record<string, unknown>
+): StreamingBlock[] {
+  const eventType = data.sessionUpdate as string
+
+  if (eventType === "agent_message_chunk" && (data.content as Record<string, unknown>)?.type === "text") {
+    const text = (data.content as Record<string, unknown>).text as string
+    const last = blocks[blocks.length - 1]
+    if (last && last.type === "text") {
+      last.content += text
+    } else {
+      blocks.push({ type: "text", content: text })
+    }
+  } else if (eventType === "tool_call") {
+    const existing = blocks.find(
+      (b): b is StreamingBlock & { type: "tool_call" } =>
+        b.type === "tool_call" && b.state.toolCallId === data.toolCallId
+    )
+    if (existing) {
+      if (data.title != null) existing.state.title = data.title as string
+      if (data.kind != null) existing.state.kind = data.kind as string
+      if (data.status != null) existing.state.status = data.status as string
+      if (data.rawInput !== undefined) existing.state.rawInput = data.rawInput
+      if (data.rawOutput !== undefined) existing.state.rawOutput = data.rawOutput
+    } else {
+      const state: ToolCallState = {
+        toolCallId: data.toolCallId as string,
+        title: (data.title as string) || "Tool call",
+        status: (data.status as string) || "in_progress",
+      }
+      if (data.kind != null) state.kind = data.kind as string
+      if (data.rawInput !== undefined) state.rawInput = data.rawInput
+      if (data.rawOutput !== undefined) state.rawOutput = data.rawOutput
+      blocks.push({ type: "tool_call", state })
+    }
+  } else if (eventType === "tool_call_update") {
+    const tc = blocks.find(
+      (b): b is StreamingBlock & { type: "tool_call" } =>
+        b.type === "tool_call" && b.state.toolCallId === data.toolCallId
+    )
+    if (tc) {
+      if (data.title != null) tc.state.title = data.title as string
+      if (data.kind != null) tc.state.kind = data.kind as string
+      if (data.status != null) tc.state.status = data.status as string
+      if (data.rawInput !== undefined) tc.state.rawInput = data.rawInput
+      if (data.rawOutput !== undefined) tc.state.rawOutput = data.rawOutput
+    }
+  }
+
+  return [...blocks]
+}
+
 export default function ChatView({
   sessionId,
   cwd,
@@ -203,7 +253,6 @@ export default function ChatView({
 
   const scrollRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
-  const abortRef = useRef<AbortController | null>(null)
   const blocksRef = useRef<StreamingBlock[]>([])
 
   const hasStreamingContent = streamingBlocks.length > 0
@@ -235,6 +284,103 @@ export default function ChatView({
       .catch(() => setLoaded(true))
   }, [sessionId])
 
+  // Persistent EventSource connection for SSE events
+  useEffect(() => {
+    if (!connected) return
+
+    const es = new EventSource(`/api/sessions/${sessionId}/events`)
+
+    es.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data) as Record<string, unknown>
+        const eventType = data.sessionUpdate as string
+
+        if (eventType === "status") {
+          // Initial catch-up on connect
+          const isPrompting = data.prompting as boolean
+          setPrompting(isPrompting)
+          if (isPrompting && data.accumulatedText) {
+            const blocks: StreamingBlock[] = [{ type: "text", content: data.accumulatedText as string }]
+            blocksRef.current = blocks
+            setStreamingBlocks([...blocks])
+          }
+        } else if (eventType === "prompt_started") {
+          setPrompting(true)
+          blocksRef.current = []
+          setStreamingBlocks([])
+        } else if (eventType === "done") {
+          // Finalize streaming blocks into a completed turn
+          const blocks = blocksRef.current
+          for (const b of blocks) {
+            if (b.type === "tool_call" && (b.state.status === "in_progress" || b.state.status === "pending")) {
+              b.state.status = "completed"
+            }
+          }
+          if (blocks.length > 0) {
+            const now = Date.now()
+            const turnId = `temp-assistant-${now}`
+            const turnBlocks: BlockData[] = blocks.map((b, i) => {
+              if (b.type === "text") {
+                return {
+                  id: `temp-ablock-${now}-${i}`,
+                  turn_id: turnId,
+                  kind: "text",
+                  content: b.content,
+                  created_at: now + i,
+                }
+              }
+              return {
+                id: `temp-ablock-${now}-${i}`,
+                turn_id: turnId,
+                kind: "tool_call",
+                content: JSON.stringify(b.state),
+                created_at: now + i,
+              }
+            })
+            const assistantTurn: TurnData = {
+              id: turnId,
+              session_id: sessionId,
+              role: "assistant",
+              stop_reason: (data.stopReason as string) || "end_turn",
+              created_at: now,
+              blocks: turnBlocks,
+            }
+            setTurns((prev) => [...prev, assistantTurn])
+          }
+          blocksRef.current = []
+          setStreamingBlocks([])
+          setPrompting(false)
+        } else if (eventType === "error") {
+          const blocks = blocksRef.current
+          const last = blocks[blocks.length - 1]
+          if (last && last.type === "text") {
+            last.content += `\n\nError: ${data.message}`
+          } else {
+            blocks.push({ type: "text", content: `Error: ${data.message}` })
+          }
+          blocksRef.current = blocks
+          setStreamingBlocks([...blocks])
+          setPrompting(false)
+        } else {
+          // agent_message_chunk, tool_call, tool_call_update
+          const updated = applyEventToBlocks(blocksRef.current, data)
+          blocksRef.current = updated
+          setStreamingBlocks(updated)
+        }
+      } catch {
+        // Ignore parse errors
+      }
+    }
+
+    es.onerror = () => {
+      // EventSource auto-reconnects; nothing special needed
+    }
+
+    return () => {
+      es.close()
+    }
+  }, [connected, sessionId])
+
   // Ensure agent is connected (auto-connect if not)
   const ensureConnected = useCallback(async (): Promise<string | true> => {
     if (connected) return true
@@ -257,10 +403,8 @@ export default function ChatView({
   }, [connected, sessionId, onConnectionChange])
 
   const cancelPrompt = useCallback(() => {
-    if (abortRef.current) {
-      abortRef.current.abort()
-    }
-  }, [])
+    fetch(`/api/sessions/${sessionId}/cancel`, { method: "POST" }).catch(() => {})
+  }, [sessionId])
 
   const sendPrompt = useCallback(
     async (text: string) => {
@@ -275,9 +419,6 @@ export default function ChatView({
       }
 
       setInput("")
-      setPrompting(true)
-      setStreamingBlocks([])
-      blocksRef.current = []
 
       // Add user turn optimistically
       const userTurn: TurnData = {
@@ -298,207 +439,20 @@ export default function ChatView({
       }
       setTurns((prev) => [...prev, userTurn])
 
-      const controller = new AbortController()
-      abortRef.current = controller
-
       try {
         const res = await fetch(`/api/sessions/${sessionId}/prompt`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ content: trimmed }),
-          signal: controller.signal,
         })
 
         if (!res.ok) {
           const err = await res.json().catch(() => ({ error: "Unknown error" }))
           setStreamingBlocks([{ type: "text", content: `Error: ${err.error}` }])
-          setPrompting(false)
-          return
         }
-
-        const reader = res.body?.getReader()
-        if (!reader) {
-          setPrompting(false)
-          return
-        }
-
-        const decoder = new TextDecoder()
-        let buffer = ""
-
-        while (true) {
-          const { done, value } = await reader.read()
-          if (done) break
-
-          buffer += decoder.decode(value, { stream: true })
-          const lines = buffer.split("\n")
-          buffer = lines.pop() || ""
-
-          for (const line of lines) {
-            if (!line.startsWith("data: ")) continue
-            try {
-              const data = JSON.parse(line.slice(6))
-              if (
-                data.sessionUpdate === "agent_message_chunk" &&
-                data.content?.type === "text"
-              ) {
-                const blocks = blocksRef.current
-                const last = blocks[blocks.length - 1]
-                if (last && last.type === "text") {
-                  last.content += data.content.text
-                } else {
-                  blocks.push({ type: "text", content: data.content.text })
-                }
-                blocksRef.current = blocks
-                setStreamingBlocks([...blocks])
-              } else if (data.sessionUpdate === "tool_call") {
-                const blocks = blocksRef.current
-                const existing = blocks.find(
-                  (b): b is StreamingBlock & { type: "tool_call" } =>
-                    b.type === "tool_call" && b.state.toolCallId === data.toolCallId
-                )
-                if (existing) {
-                  // Merge into existing tool call (agent sent duplicate tool_call event)
-                  if (data.title != null) existing.state.title = data.title
-                  if (data.kind != null) existing.state.kind = data.kind
-                  if (data.status != null) existing.state.status = data.status
-                  if (data.rawInput !== undefined) existing.state.rawInput = data.rawInput
-                  if (data.rawOutput !== undefined) existing.state.rawOutput = data.rawOutput
-                } else {
-                  blocks.push({
-                    type: "tool_call",
-                    state: {
-                      toolCallId: data.toolCallId,
-                      title: data.title || "Tool call",
-                      kind: data.kind,
-                      status: data.status || "in_progress",
-                      rawInput: data.rawInput,
-                      rawOutput: data.rawOutput,
-                    },
-                  })
-                }
-                blocksRef.current = blocks
-                setStreamingBlocks([...blocks])
-              } else if (data.sessionUpdate === "tool_call_update") {
-                const blocks = blocksRef.current
-                const tc = blocks.find(
-                  (b): b is StreamingBlock & { type: "tool_call" } =>
-                    b.type === "tool_call" && b.state.toolCallId === data.toolCallId
-                )
-                if (tc) {
-                  if (data.title != null) tc.state.title = data.title
-                  if (data.kind != null) tc.state.kind = data.kind
-                  if (data.status != null) tc.state.status = data.status
-                  if (data.rawInput !== undefined) tc.state.rawInput = data.rawInput
-                  if (data.rawOutput !== undefined) tc.state.rawOutput = data.rawOutput
-                }
-                blocksRef.current = blocks
-                setStreamingBlocks([...blocks])
-              } else if (data.sessionUpdate === "done") {
-                // Finalize: convert streaming blocks into a turn
-                const blocks = blocksRef.current
-                // Force-complete any tool calls still in progress
-                for (const b of blocks) {
-                  if (b.type === "tool_call" && (b.state.status === "in_progress" || b.state.status === "pending")) {
-                    b.state.status = "completed"
-                  }
-                }
-                if (blocks.length > 0) {
-                  const now = Date.now()
-                  const turnId = `temp-assistant-${now}`
-                  const turnBlocks: BlockData[] = blocks.map((b, i) => {
-                    if (b.type === "text") {
-                      return {
-                        id: `temp-ablock-${now}-${i}`,
-                        turn_id: turnId,
-                        kind: "text",
-                        content: b.content,
-                        created_at: now + i,
-                      }
-                    }
-                    return {
-                      id: `temp-ablock-${now}-${i}`,
-                      turn_id: turnId,
-                      kind: "tool_call",
-                      content: JSON.stringify(b.state),
-                      created_at: now + i,
-                    }
-                  })
-                  const assistantTurn: TurnData = {
-                    id: turnId,
-                    session_id: sessionId,
-                    role: "assistant",
-                    stop_reason: data.stopReason || "end_turn",
-                    created_at: now,
-                    blocks: turnBlocks,
-                  }
-                  setTurns((prev) => [...prev, assistantTurn])
-                }
-                setStreamingBlocks([])
-                blocksRef.current = []
-              } else if (data.sessionUpdate === "error") {
-                const blocks = blocksRef.current
-                const last = blocks[blocks.length - 1]
-                if (last && last.type === "text") {
-                  last.content += `\n\nError: ${data.message}`
-                } else {
-                  blocks.push({ type: "text", content: `Error: ${data.message}` })
-                }
-                blocksRef.current = blocks
-                setStreamingBlocks([...blocks])
-              }
-            } catch {
-              // Ignore parse errors
-            }
-          }
-        }
-      } catch (err) {
-        if (err instanceof DOMException && err.name === "AbortError") {
-          // User cancelled — finalize whatever we have so far
-          const blocks = blocksRef.current
-          if (blocks.length > 0) {
-            // Append [cancelled] to last text block or add one
-            const last = blocks[blocks.length - 1]
-            if (last && last.type === "text") {
-              last.content += "\n\n[cancelled]"
-            } else {
-              blocks.push({ type: "text", content: "[cancelled]" })
-            }
-            const now = Date.now()
-            const turnId = `temp-cancelled-${now}`
-            const turnBlocks: BlockData[] = blocks.map((b, i) => {
-              if (b.type === "text") {
-                return {
-                  id: `temp-cblock-${now}-${i}`,
-                  turn_id: turnId,
-                  kind: "text",
-                  content: b.content,
-                  created_at: now + i,
-                }
-              }
-              return {
-                id: `temp-cblock-${now}-${i}`,
-                turn_id: turnId,
-                kind: "tool_call",
-                content: JSON.stringify(b.state),
-                created_at: now + i,
-              }
-            })
-            const assistantTurn: TurnData = {
-              id: turnId,
-              session_id: sessionId,
-              role: "assistant",
-              stop_reason: "cancelled",
-              created_at: now,
-              blocks: turnBlocks,
-            }
-            setTurns((prev) => [...prev, assistantTurn])
-          }
-          setStreamingBlocks([])
-          blocksRef.current = []
-        }
-      } finally {
-        abortRef.current = null
-        setPrompting(false)
+        // On success, prompt_started and streaming events arrive via EventSource
+      } catch {
+        setStreamingBlocks([{ type: "text", content: "Error: Network error" }])
       }
     },
     [prompting, sessionId, ensureConnected]

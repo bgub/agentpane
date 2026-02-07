@@ -13,6 +13,7 @@ import {
 import { nodeToWebWritable, nodeToWebReadable } from "@zed-industries/claude-code-acp"
 import { SessionRepo } from "./session-repo"
 import { AcpConnectionError } from "./schema"
+import { EventBroadcaster } from "./event-broadcaster"
 import { resolveProviderBin, PROVIDERS } from "./providers"
 
 interface TerminalExitStatus {
@@ -34,11 +35,20 @@ interface AgentConnection {
   process: ChildProcess
   connection: ClientSideConnection
   agentSessionId: string
-  /** Controller to push SSE events during a prompt */
-  sseController: ReadableStreamDefaultController<string> | null
+  broadcaster: EventBroadcaster
   prompting: boolean
+  currentAssistantTurnId: string | null
+  accumulatedText: string
   terminals: Map<string, TerminalState>
   cwd: string
+}
+
+interface SubscribeResult {
+  subscriberId: string
+  stream: ReadableStream<string>
+  prompting: boolean
+  assistantTurnId: string | null
+  accumulatedText: string
 }
 
 export class AcpClient extends Context.Tag("@acapa/AcpClient")<
@@ -52,10 +62,12 @@ export class AcpClient extends Context.Tag("@acapa/AcpClient")<
     readonly prompt: (
       sessionId: string,
       content: string
-    ) => Effect.Effect<ReadableStream<string>, AcpConnectionError>
+    ) => Effect.Effect<{ userTurnId: string; assistantTurnId: string }, AcpConnectionError>
     readonly cancel: (sessionId: string) => Effect.Effect<void>
     readonly disconnect: (sessionId: string) => Effect.Effect<void>
     readonly isConnected: (sessionId: string) => Effect.Effect<boolean>
+    readonly subscribe: (sessionId: string) => Effect.Effect<SubscribeResult, AcpConnectionError>
+    readonly unsubscribe: (sessionId: string, subscriberId: string) => Effect.Effect<void>
     readonly connectedSessionIds: () => ReadonlySet<string>
     readonly promptingSessionIds: () => ReadonlySet<string>
   }
@@ -75,10 +87,8 @@ export class AcpClient extends Context.Tag("@acapa/AcpClient")<
           terminal.outputByteLimit !== null &&
           Buffer.byteLength(terminal.output, "utf-8") > terminal.outputByteLimit
         ) {
-          // Truncate from the beginning to stay within limit
           const buf = Buffer.from(terminal.output, "utf-8")
           let start = buf.length - terminal.outputByteLimit
-          // Advance to a valid UTF-8 character boundary
           while (start < buf.length && (buf[start] & 0xc0) === 0x80) {
             start++
           }
@@ -104,14 +114,38 @@ export class AcpClient extends Context.Tag("@acapa/AcpClient")<
         return (_agent: Agent): Client => ({
           sessionUpdate: async (params) => {
             const conn = connRef.current
-            if (conn?.sseController) {
-              const event = `data: ${JSON.stringify(params.update)}\n\n`
-              conn.sseController.enqueue(event)
+            if (!conn) return
+
+            const update = params.update as Record<string, unknown>
+            const eventType = update.sessionUpdate as string | undefined
+
+            // Accumulate text for DB persistence
+            if (
+              eventType === "agent_message_chunk" &&
+              (update.content as Record<string, unknown>)?.type === "text"
+            ) {
+              conn.accumulatedText += (update.content as Record<string, unknown>).text as string
             }
+
+            // Persist tool calls immediately
+            if (
+              conn.currentAssistantTurnId &&
+              (eventType === "tool_call" || eventType === "tool_call_update")
+            ) {
+              runPromise(
+                repo.addMessageBlock(
+                  conn.currentAssistantTurnId,
+                  eventType,
+                  JSON.stringify(update)
+                )
+              ).catch(() => {})
+            }
+
+            // Broadcast to all subscribers
+            conn.broadcaster.broadcast(update)
           },
 
           requestPermission: async (params) => {
-            // Phase 1: auto-allow first option
             const firstOption = params.options[0]
             if (firstOption) {
               return {
@@ -322,8 +356,10 @@ export class AcpClient extends Context.Tag("@acapa/AcpClient")<
             process: proc,
             connection: clientConnection,
             agentSessionId,
-            sseController: null,
+            broadcaster: new EventBroadcaster(),
             prompting: false,
+            currentAssistantTurnId: null,
+            accumulatedText: "",
             terminals: new Map(),
             cwd: effectiveCwd,
           }
@@ -360,44 +396,79 @@ export class AcpClient extends Context.Tag("@acapa/AcpClient")<
             })
           }
 
-          conn.prompting = true
+          if (conn.prompting) {
+            return yield* new AcpConnectionError({
+              message: "A prompt is already in progress for this session",
+            })
+          }
 
-          const sseStream = new ReadableStream<string>({
-            start(controller) {
-              conn.sseController = controller
-            },
-            cancel() {
-              conn.sseController = null
-              conn.prompting = false
-            },
+          // Create user turn + block in DB
+          const userTurn = yield* repo.addTurn(sessionId, "user").pipe(Effect.orDie)
+          yield* repo.addMessageBlock(userTurn.id, "text", content).pipe(Effect.orDie)
+          yield* repo.completeTurn(userTurn.id, "end_turn").pipe(Effect.orDie)
+
+          // Create assistant turn
+          const assistantTurn = yield* repo.addTurn(sessionId, "assistant").pipe(Effect.orDie)
+
+          // Set prompting state
+          conn.prompting = true
+          conn.currentAssistantTurnId = assistantTurn.id
+          conn.accumulatedText = ""
+
+          // Broadcast prompt_started
+          conn.broadcaster.broadcast({
+            sessionUpdate: "prompt_started",
+            userTurnId: userTurn.id,
+            assistantTurnId: assistantTurn.id,
           })
 
-          // Start the prompt asynchronously — it resolves when the agent is done
+          // Fire prompt asynchronously
           conn.connection
             .prompt({
               sessionId: conn.agentSessionId,
               prompt: [{ type: "text", text: content }],
             })
             .then((response) => {
-              if (conn.sseController) {
-                const doneEvent = `data: ${JSON.stringify({ sessionUpdate: "done", stopReason: response.stopReason })}\n\n`
-                conn.sseController.enqueue(doneEvent)
-                conn.sseController.close()
+              // Persist accumulated text
+              if (conn.accumulatedText) {
+                runPromise(
+                  repo.addMessageBlock(assistantTurn.id, "text", conn.accumulatedText).pipe(Effect.orDie)
+                ).catch(() => {})
               }
+              // Complete turn
+              runPromise(
+                repo.completeTurn(assistantTurn.id, response.stopReason || "end_turn").pipe(Effect.orDie)
+              ).catch(() => {})
+              // Broadcast done
+              conn.broadcaster.broadcast({
+                sessionUpdate: "done",
+                stopReason: response.stopReason || "end_turn",
+              })
             })
             .catch((err) => {
-              if (conn.sseController) {
-                const errorEvent = `data: ${JSON.stringify({ sessionUpdate: "error", message: String(err) })}\n\n`
-                conn.sseController.enqueue(errorEvent)
-                conn.sseController.close()
+              // Persist what we have
+              if (conn.accumulatedText) {
+                runPromise(
+                  repo.addMessageBlock(assistantTurn.id, "text", conn.accumulatedText).pipe(Effect.orDie)
+                ).catch(() => {})
               }
+              // Complete turn as error
+              runPromise(
+                repo.completeTurn(assistantTurn.id, "error").pipe(Effect.orDie)
+              ).catch(() => {})
+              // Broadcast error
+              conn.broadcaster.broadcast({
+                sessionUpdate: "error",
+                message: String(err),
+              })
             })
             .finally(() => {
-              conn.sseController = null
               conn.prompting = false
+              conn.currentAssistantTurnId = null
+              conn.accumulatedText = ""
             })
 
-          return sseStream
+          return { userTurnId: userTurn.id, assistantTurnId: assistantTurn.id }
         }
       )
 
@@ -408,6 +479,36 @@ export class AcpClient extends Context.Tag("@acapa/AcpClient")<
             yield* Effect.promise(() =>
               conn.connection.cancel({ sessionId: conn.agentSessionId })
             )
+          }
+        }
+      )
+
+      const subscribe = Effect.fn("AcpClient.subscribe")(
+        function* (sessionId: string) {
+          const conn = connections.get(sessionId)
+          if (!conn) {
+            return yield* new AcpConnectionError({
+              message: "Agent not connected for this session",
+            })
+          }
+
+          const { subscriberId, stream } = conn.broadcaster.subscribe()
+
+          return {
+            subscriberId,
+            stream,
+            prompting: conn.prompting,
+            assistantTurnId: conn.currentAssistantTurnId,
+            accumulatedText: conn.accumulatedText,
+          }
+        }
+      )
+
+      const unsubscribe = Effect.fn("AcpClient.unsubscribe")(
+        function* (sessionId: string, subscriberId: string) {
+          const conn = connections.get(sessionId)
+          if (conn) {
+            conn.broadcaster.unsubscribe(subscriberId)
           }
         }
       )
@@ -427,10 +528,7 @@ export class AcpClient extends Context.Tag("@acapa/AcpClient")<
             if (!conn.process.killed) {
               conn.process.kill()
             }
-            if (conn.sseController) {
-              conn.sseController.close()
-              conn.sseController = null
-            }
+            conn.broadcaster.close()
           }
         }
       )
@@ -447,6 +545,8 @@ export class AcpClient extends Context.Tag("@acapa/AcpClient")<
         cancel,
         disconnect,
         isConnected,
+        subscribe,
+        unsubscribe,
         connectedSessionIds: () =>
           new Set(connections.keys()) as ReadonlySet<string>,
         promptingSessionIds: () =>
