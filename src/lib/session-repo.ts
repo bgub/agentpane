@@ -2,7 +2,7 @@ import { SqlClient } from "@effect/sql/SqlClient"
 import type { SqlError } from "@effect/sql/SqlError"
 import { Context, Effect, Layer } from "effect"
 import * as crypto from "node:crypto"
-import { Session, Entry, SessionNotFoundError } from "./schema"
+import { Session, Turn, MessageBlock, SessionNotFoundError } from "./schema"
 
 export class SessionRepo extends Context.Tag("@acapa/SessionRepo")<
   SessionRepo,
@@ -13,12 +13,29 @@ export class SessionRepo extends Context.Tag("@acapa/SessionRepo")<
     readonly remove: (id: string) => Effect.Effect<void, SqlError>
     readonly rename: (id: string, name: string) => Effect.Effect<Session, SqlError | SessionNotFoundError>
     readonly updateCwd: (id: string, cwd: string) => Effect.Effect<void, SqlError>
-    readonly addEntry: (
+    readonly updateAgentSessionId: (
+      id: string,
+      agentSessionId: string | null
+    ) => Effect.Effect<void, SqlError>
+    readonly addTurn: (
       sessionId: string,
-      type: string,
+      role: "user" | "assistant"
+    ) => Effect.Effect<Turn, SqlError>
+    readonly completeTurn: (
+      turnId: string,
+      stopReason: string
+    ) => Effect.Effect<void, SqlError>
+    readonly addMessageBlock: (
+      turnId: string,
+      kind: string,
       content: string
-    ) => Effect.Effect<Entry, SqlError>
-    readonly getEntries: (sessionId: string) => Effect.Effect<ReadonlyArray<Entry>, SqlError>
+    ) => Effect.Effect<MessageBlock, SqlError>
+    readonly getConversation: (
+      sessionId: string
+    ) => Effect.Effect<
+      ReadonlyArray<Turn & { blocks: ReadonlyArray<MessageBlock> }>,
+      SqlError
+    >
   }
 >() {
   static readonly layer = Layer.effect(
@@ -27,11 +44,11 @@ export class SessionRepo extends Context.Tag("@acapa/SessionRepo")<
       const sql = yield* SqlClient
 
       const list = Effect.fn("SessionRepo.list")(function* () {
-        return yield* sql<Session>`SELECT id, name, cwd, created_at FROM sessions ORDER BY created_at`
+        return yield* sql<Session>`SELECT id, name, cwd, agent_session_id, created_at FROM sessions ORDER BY created_at`
       })
 
       const get = Effect.fn("SessionRepo.get")(function* (id: string) {
-        const rows = yield* sql<Session>`SELECT id, name, cwd, created_at FROM sessions WHERE id = ${id}`
+        const rows = yield* sql<Session>`SELECT id, name, cwd, agent_session_id, created_at FROM sessions WHERE id = ${id}`
         if (rows.length === 0) {
           return yield* new SessionNotFoundError({ id })
         }
@@ -45,9 +62,9 @@ export class SessionRepo extends Context.Tag("@acapa/SessionRepo")<
         const sessionName = name || `Session ${(counts[0]?.cnt ?? 0) + 1}`
         const home = process.env.HOME || "~"
         const rows = yield* sql<Session>`
-          INSERT INTO sessions (id, name, cwd, created_at)
-          VALUES (${id}, ${sessionName}, ${home}, ${now})
-          RETURNING id, name, cwd, created_at
+          INSERT INTO sessions (id, name, cwd, agent_session_id, created_at)
+          VALUES (${id}, ${sessionName}, ${home}, ${null}, ${now})
+          RETURNING id, name, cwd, agent_session_id, created_at
         `
         return rows[0]
       })
@@ -59,7 +76,7 @@ export class SessionRepo extends Context.Tag("@acapa/SessionRepo")<
       const rename = Effect.fn("SessionRepo.rename")(function* (id: string, name: string) {
         const rows = yield* sql<Session>`
           UPDATE sessions SET name = ${name} WHERE id = ${id}
-          RETURNING id, name, cwd, created_at
+          RETURNING id, name, cwd, agent_session_id, created_at
         `
         if (rows.length === 0) {
           return yield* new SessionNotFoundError({ id })
@@ -71,22 +88,73 @@ export class SessionRepo extends Context.Tag("@acapa/SessionRepo")<
         yield* sql`UPDATE sessions SET cwd = ${cwd} WHERE id = ${id}`
       })
 
-      const addEntry = Effect.fn("SessionRepo.addEntry")(
-        function* (sessionId: string, type: string, content: string) {
+      const updateAgentSessionId = Effect.fn("SessionRepo.updateAgentSessionId")(
+        function* (id: string, agentSessionId: string | null) {
+          yield* sql`UPDATE sessions SET agent_session_id = ${agentSessionId} WHERE id = ${id}`
+        }
+      )
+
+      const addTurn = Effect.fn("SessionRepo.addTurn")(
+        function* (sessionId: string, role: "user" | "assistant") {
+          const id = crypto.randomUUID()
           const now = Date.now()
-          const rows = yield* sql<Entry>`
-            INSERT INTO entries (session_id, type, content, created_at)
-            VALUES (${sessionId}, ${type}, ${content}, ${now})
-            RETURNING id, session_id, type, content, created_at
+          const rows = yield* sql<Turn>`
+            INSERT INTO turns (id, session_id, role, stop_reason, created_at)
+            VALUES (${id}, ${sessionId}, ${role}, ${null}, ${now})
+            RETURNING id, session_id, role, stop_reason, created_at
           `
           return rows[0]
         }
       )
 
-      const getEntries = Effect.fn("SessionRepo.getEntries")(function* (sessionId: string) {
-        const rows = yield* sql<Entry>`SELECT id, session_id, type, content, created_at FROM entries WHERE session_id = ${sessionId} ORDER BY id DESC LIMIT 2000`
-        return rows.slice().reverse()
-      })
+      const completeTurn = Effect.fn("SessionRepo.completeTurn")(
+        function* (turnId: string, stopReason: string) {
+          yield* sql`UPDATE turns SET stop_reason = ${stopReason} WHERE id = ${turnId}`
+        }
+      )
+
+      const addMessageBlock = Effect.fn("SessionRepo.addMessageBlock")(
+        function* (turnId: string, kind: string, content: string) {
+          const id = crypto.randomUUID()
+          const now = Date.now()
+          const rows = yield* sql<MessageBlock>`
+            INSERT INTO message_blocks (id, turn_id, kind, content, created_at)
+            VALUES (${id}, ${turnId}, ${kind}, ${content}, ${now})
+            RETURNING id, turn_id, kind, content, created_at
+          `
+          return rows[0]
+        }
+      )
+
+      const getConversation = Effect.fn("SessionRepo.getConversation")(
+        function* (sessionId: string) {
+          const turns = yield* sql<Turn>`
+            SELECT id, session_id, role, stop_reason, created_at
+            FROM turns
+            WHERE session_id = ${sessionId}
+            ORDER BY created_at, id
+          `
+          const blocks = yield* sql<MessageBlock>`
+            SELECT mb.id, mb.turn_id, mb.kind, mb.content, mb.created_at
+            FROM message_blocks mb
+            JOIN turns t ON t.id = mb.turn_id
+            WHERE t.session_id = ${sessionId}
+            ORDER BY mb.created_at, mb.id
+          `
+
+          const blocksByTurn = new Map<string, MessageBlock[]>()
+          for (const block of blocks) {
+            const arr = blocksByTurn.get(block.turn_id) ?? []
+            arr.push(block)
+            blocksByTurn.set(block.turn_id, arr)
+          }
+
+          return turns.map((turn) => ({
+            ...turn,
+            blocks: blocksByTurn.get(turn.id) ?? [],
+          }))
+        }
+      )
 
       return SessionRepo.of({
         list,
@@ -95,8 +163,11 @@ export class SessionRepo extends Context.Tag("@acapa/SessionRepo")<
         remove,
         rename,
         updateCwd,
-        addEntry,
-        getEntries,
+        updateAgentSessionId,
+        addTurn,
+        completeTurn,
+        addMessageBlock,
+        getConversation,
       })
     })
   )

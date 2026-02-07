@@ -8,8 +8,8 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params
-  const entries = await AppRuntime.runPromise(
-    Effect.flatMap(SessionRepo, (repo) => repo.getEntries(id))
+  const conversation = await AppRuntime.runPromise(
+    Effect.flatMap(SessionRepo, (repo) => repo.getConversation(id))
   )
-  return Response.json(entries)
+  return Response.json(conversation)
 }

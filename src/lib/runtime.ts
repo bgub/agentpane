@@ -1,9 +1,9 @@
 import { Layer, ManagedRuntime } from "effect"
 import { SqliteLive } from "./db"
 import { SessionRepo } from "./session-repo"
-import { CommandExecutor } from "./command-executor"
+import { AcpClient } from "./acp-client"
 
-const AppLayer = CommandExecutor.layer.pipe(
+const AppLayer = AcpClient.layer.pipe(
   Layer.provideMerge(SessionRepo.layer),
   Layer.provideMerge(SqliteLive)
 )

@@ -19,20 +19,33 @@ const migrations = Effect.gen(function* () {
       id TEXT PRIMARY KEY,
       name TEXT NOT NULL,
       cwd TEXT NOT NULL DEFAULT '~',
+      agent_session_id TEXT,
       created_at INTEGER NOT NULL
     )
   `
   yield* sql`
-    CREATE TABLE IF NOT EXISTS entries (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
+    CREATE TABLE IF NOT EXISTS turns (
+      id TEXT PRIMARY KEY,
       session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
-      type TEXT NOT NULL,
+      role TEXT NOT NULL CHECK(role IN ('user', 'assistant')),
+      stop_reason TEXT,
+      created_at INTEGER NOT NULL
+    )
+  `
+  yield* sql`
+    CREATE INDEX IF NOT EXISTS idx_turns_session ON turns(session_id, id)
+  `
+  yield* sql`
+    CREATE TABLE IF NOT EXISTS message_blocks (
+      id TEXT PRIMARY KEY,
+      turn_id TEXT NOT NULL REFERENCES turns(id) ON DELETE CASCADE,
+      kind TEXT NOT NULL,
       content TEXT NOT NULL,
       created_at INTEGER NOT NULL
     )
   `
   yield* sql`
-    CREATE INDEX IF NOT EXISTS idx_entries_session ON entries(session_id, id)
+    CREATE INDEX IF NOT EXISTS idx_message_blocks_turn ON message_blocks(turn_id, id)
   `
 })
 

@@ -1,5 +1,6 @@
 import { AppRuntime } from "@/lib/runtime"
 import { SessionRepo } from "@/lib/session-repo"
+import { AcpClient } from "@/lib/acp-client"
 import { Effect, Exit } from "effect"
 import type { NextRequest } from "next/server"
 
@@ -9,7 +10,13 @@ export async function GET(
 ) {
   const { id } = await params
   const exit = await AppRuntime.runPromiseExit(
-    Effect.flatMap(SessionRepo, (repo) => repo.get(id))
+    Effect.gen(function* () {
+      const repo = yield* SessionRepo
+      const acp = yield* AcpClient
+      const session = yield* repo.get(id)
+      const connected = yield* acp.isConnected(id)
+      return { ...session, connected }
+    })
   )
   return Exit.match(exit, {
     onFailure: (cause) => {
@@ -43,7 +50,12 @@ export async function DELETE(
 ) {
   const { id } = await params
   await AppRuntime.runPromise(
-    Effect.flatMap(SessionRepo, (repo) => repo.remove(id))
+    Effect.gen(function* () {
+      const acp = yield* AcpClient
+      yield* acp.disconnect(id)
+      const repo = yield* SessionRepo
+      yield* repo.remove(id)
+    })
   )
   return new Response(null, { status: 204 })
 }

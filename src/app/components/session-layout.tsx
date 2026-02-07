@@ -2,28 +2,34 @@
 
 import { useState, useEffect, useCallback } from "react"
 import Sidebar from "./sidebar"
-import Terminal from "./terminal"
+import ChatView from "./chat-view"
 
 interface Session {
   id: string
   name: string
   cwd: string
+  agent_session_id: string | null
   created_at: number
-  running?: boolean
+  connected?: boolean
+  prompting?: boolean
 }
 
 export default function SessionLayout() {
   const [sessions, setSessions] = useState<Session[]>([])
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null)
   const [initialized, setInitialized] = useState(false)
-  const [runningSessionIds, setRunningSessionIds] = useState<Set<string>>(new Set())
+  const [connectedSessionIds, setConnectedSessionIds] = useState<Set<string>>(new Set())
+  const [promptingSessionIds, setPromptingSessionIds] = useState<Set<string>>(new Set())
 
   const fetchSessions = useCallback(async () => {
     const res = await fetch("/api/sessions")
     const data: Session[] = await res.json()
     setSessions(data)
-    setRunningSessionIds(
-      new Set(data.filter((s) => s.running).map((s) => s.id))
+    setConnectedSessionIds(
+      new Set(data.filter((s) => s.connected).map((s) => s.id))
+    )
+    setPromptingSessionIds(
+      new Set(data.filter((s) => s.prompting).map((s) => s.id))
     )
     return data
   }, [])
@@ -32,12 +38,14 @@ export default function SessionLayout() {
   useEffect(() => {
     fetchSessions().then((data) => {
       if (data.length === 0) {
-        // Auto-create first session
         fetch("/api/sessions", { method: "POST" })
           .then((res) => res.json())
           .then((session: Session) => {
             setSessions([session])
             setActiveSessionId(session.id)
+            if (session.connected) {
+              setConnectedSessionIds(new Set([session.id]))
+            }
             setInitialized(true)
           })
       } else {
@@ -52,6 +60,9 @@ export default function SessionLayout() {
     const session: Session = await res.json()
     setSessions((prev) => [...prev, session])
     setActiveSessionId(session.id)
+    if (session.connected) {
+      setConnectedSessionIds((prev) => new Set([...prev, session.id]))
+    }
   }
 
   const handleDelete = async (id: string) => {
@@ -63,6 +74,16 @@ export default function SessionLayout() {
       }
       return remaining
     })
+    setConnectedSessionIds((prev) => {
+      const next = new Set(prev)
+      next.delete(id)
+      return next
+    })
+    setPromptingSessionIds((prev) => {
+      const next = new Set(prev)
+      next.delete(id)
+      return next
+    })
   }
 
   const handleRename = async (id: string, name: string) => {
@@ -72,14 +93,14 @@ export default function SessionLayout() {
       body: JSON.stringify({ name }),
     })
     const updated: Session = await res.json()
-    setSessions((prev) => prev.map((s) => (s.id === id ? updated : s)))
+    setSessions((prev) => prev.map((s) => (s.id === id ? { ...s, ...updated } : s)))
   }
 
-  const handleRunningChange = useCallback(
-    (sessionId: string, running: boolean) => {
-      setRunningSessionIds((prev) => {
+  const handlePromptingChange = useCallback(
+    (sessionId: string, prompting: boolean) => {
+      setPromptingSessionIds((prev) => {
         const next = new Set(prev)
-        if (running) next.add(sessionId)
+        if (prompting) next.add(sessionId)
         else next.delete(sessionId)
         return next
       })
@@ -87,11 +108,14 @@ export default function SessionLayout() {
     []
   )
 
-  const handleCwdChange = useCallback(
-    (sessionId: string, cwd: string) => {
-      setSessions((prev) =>
-        prev.map((s) => (s.id === sessionId ? { ...s, cwd } : s))
-      )
+  const handleConnectionChange = useCallback(
+    (sessionId: string, connected: boolean) => {
+      setConnectedSessionIds((prev) => {
+        const next = new Set(prev)
+        if (connected) next.add(sessionId)
+        else next.delete(sessionId)
+        return next
+      })
     },
     []
   )
@@ -109,7 +133,8 @@ export default function SessionLayout() {
       <Sidebar
         sessions={sessions}
         activeSessionId={activeSessionId}
-        runningSessionIds={runningSessionIds}
+        connectedSessionIds={connectedSessionIds}
+        promptingSessionIds={promptingSessionIds}
         onSelect={setActiveSessionId}
         onCreate={handleCreate}
         onDelete={handleDelete}
@@ -121,12 +146,12 @@ export default function SessionLayout() {
             key={session.id}
             className={`absolute inset-0 ${session.id === activeSessionId ? "" : "invisible"}`}
           >
-            <Terminal
+            <ChatView
               sessionId={session.id}
               active={session.id === activeSessionId}
-              cwd={session.cwd}
-              onCwdChange={handleCwdChange}
-              onRunningChange={handleRunningChange}
+              connected={connectedSessionIds.has(session.id)}
+              onPromptingChange={handlePromptingChange}
+              onConnectionChange={handleConnectionChange}
             />
           </div>
         ))}

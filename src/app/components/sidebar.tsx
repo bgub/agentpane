@@ -21,7 +21,8 @@ interface Session {
 interface SidebarProps {
   sessions: Session[]
   activeSessionId: string | null
-  runningSessionIds: Set<string>
+  connectedSessionIds: Set<string>
+  promptingSessionIds: Set<string>
   onSelect: (id: string) => void
   onCreate: () => void
   onDelete: (id: string) => void
@@ -31,7 +32,8 @@ interface SidebarProps {
 export default function Sidebar({
   sessions,
   activeSessionId,
-  runningSessionIds,
+  connectedSessionIds,
+  promptingSessionIds,
   onSelect,
   onCreate,
   onDelete,
@@ -63,6 +65,19 @@ export default function Sidebar({
   const handleEditKeyDown = (e: KeyboardEvent<HTMLInputElement>) => {
     if (e.key === "Enter") commitRename()
     if (e.key === "Escape") setEditingId(null)
+  }
+
+  const statusDot = (sessionId: string) => {
+    if (promptingSessionIds.has(sessionId)) {
+      // Amber pulsing: agent processing a prompt
+      return <span className="shrink-0 size-1.5 rounded-full bg-amber-400 animate-pulse" />
+    }
+    if (connectedSessionIds.has(sessionId)) {
+      // Green: agent connected, idle
+      return <span className="shrink-0 size-1.5 rounded-full bg-green-400" />
+    }
+    // Gray: not connected
+    return <span className="shrink-0 size-1.5 rounded-full bg-zinc-600" />
   }
 
   return (
@@ -102,9 +117,7 @@ export default function Sidebar({
                 />
               ) : (
                 <>
-                  {runningSessionIds.has(session.id) && (
-                    <span className="shrink-0 size-1.5 rounded-full bg-amber-400 animate-pulse" />
-                  )}
+                  {statusDot(session.id)}
                   <span className="flex-1 truncate">{session.name}</span>
                   <DropdownMenu>
                     <DropdownMenuTrigger asChild>

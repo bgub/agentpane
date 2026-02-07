@@ -1,12 +1,13 @@
 # Acapa
 
-Web-based terminal with persistent multi-session support. Users can create, rename, and delete terminal sessions, each with independent command history and working directory that persists across server restarts.
+ACP (Agent Client Protocol) frontend — a web UI for interacting with AI coding agents like Claude Code. Spawns ACP agent subprocesses, communicates via JSON-RPC 2.0 over stdio, and displays streamed agent responses, tool calls, and plans in a chat-style interface.
 
 ## Tech Stack
 
 - **Frontend:** Next.js 16, React 19, Tailwind CSS 4
 - **Backend:** Effect.ts services/layers, ManagedRuntime singleton
 - **Database:** SQLite via `@effect/sql-sqlite-node` + `better-sqlite3` at `data/acapa.db`
+- **ACP:** `@agentclientprotocol/sdk` + `@zed-industries/claude-code-acp`
 - **Dev server:** `npm run dev` on port 6767
 
 ## Architecture
@@ -15,33 +16,36 @@ Web-based terminal with persistent multi-session support. Users can create, rena
 
 Effect.ts service layers composed into a single `ManagedRuntime` (`AppRuntime`) shared across all API routes:
 
-- `schema.ts` — Effect Schema classes for `Session`, `Entry`, and `SessionNotFoundError`
+- `schema.ts` — Effect Schema classes for `Session`, `Turn`, `MessageBlock`, and error types
 - `db.ts` — `SqliteLive` layer (SQLite connection, migrations, WAL mode, foreign keys)
-- `session-repo.ts` — `SessionRepo` service (`Context.Tag` class with static `layer`)
-- `command-executor.ts` — `CommandExecutor` service (`Context.Tag` class with static `layer`)
-- `runtime.ts` — `AppRuntime = ManagedRuntime.make(CommandExecutor.layer | SessionRepo.layer | SqliteLive)`
+- `session-repo.ts` — `SessionRepo` service (CRUD for sessions, turns, message blocks)
+- `acp-client.ts` — `AcpClient` service (manages agent subprocesses, ACP connections, prompt streaming)
+- `runtime.ts` — `AppRuntime = ManagedRuntime.make(AcpClient.layer | SessionRepo.layer | SqliteLive)`
 
 ### API Routes (`src/app/api/sessions/`)
 
-- `GET/POST /api/sessions` — list/create sessions
-- `GET/PATCH/DELETE /api/sessions/[id]` — get/rename/delete
-- `POST /api/sessions/[id]/exec` — execute command (streaming NDJSON)
-- `GET /api/sessions/[id]/history` — get all entries
+- `GET/POST /api/sessions` — list/create sessions (POST auto-connects agent)
+- `GET/PATCH/DELETE /api/sessions/[id]` — get/rename/delete (DELETE disconnects agent)
+- `POST /api/sessions/[id]/prompt` — send prompt, stream response via SSE
+- `GET /api/sessions/[id]/conversation` — get full conversation history
+- `POST/DELETE /api/sessions/[id]/connect` — connect/disconnect agent
 
 ### Frontend (`src/app/components/`)
 
-- `session-layout.tsx` — orchestrator: sidebar + terminal, auto-creates first session
-- `sidebar.tsx` — session list with create/rename/delete (right-click context menu)
-- `terminal.tsx` — per-session terminal, loads history from DB, streams command output
+- `session-layout.tsx` — orchestrator: sidebar + chat view, auto-creates first session
+- `sidebar.tsx` — session list with create/rename/delete, connection status indicators
+- `chat-view.tsx` — chat-style message display, SSE streaming, prompt input
 
 ## Key Patterns
 
 - Effect services use `Context.Tag` class pattern with static `layer` properties
-- Errors use `Schema.TaggedError` (e.g., `SessionNotFoundError`) for type-safe domain errors
+- Errors use `Schema.TaggedError` (e.g., `SessionNotFoundError`, `AcpConnectionError`) for type-safe domain errors
 - Service methods use `Effect.fn` for call-site tracing
 - API routes bridge Effect into Next.js via `AppRuntime.runPromise` / `AppRuntime.runPromiseExit`
-- CWD tracked server-side: CommandExecutor appends `echo "__ACAPA_CWD_9f3a__$(pwd)"` after each command, filters marker from streamed output, updates session cwd in DB
-- `serverExternalPackages: ["better-sqlite3"]` in `next.config.ts` for native module support
+- ACP agent spawned as child process (`claude-code-acp`), communicates via `ndJsonStream` over stdio
+- `ClientSideConnection` from ACP SDK manages JSON-RPC 2.0 protocol
+- Session updates streamed to frontend as SSE events (`text/event-stream`)
+- `serverExternalPackages` includes `better-sqlite3`, `@agentclientprotocol/sdk`, `@zed-industries/claude-code-acp`
 
 <!-- effect-solutions:start -->
 ## Effect Best Practices
