@@ -15,18 +15,30 @@ interface Session {
   prompting?: boolean
 }
 
-export default function SessionLayout() {
-  const [sessions, setSessions] = useState<Session[]>([])
-  const [activeSessionId, _setActiveSessionId] = useState<string | null>(null)
+interface SessionLayoutProps {
+  initialSessions?: Session[]
+}
+
+export default function SessionLayout({ initialSessions }: SessionLayoutProps) {
+  const hasInitialData = initialSessions !== undefined
+  const hasInitialSessions = !!initialSessions?.length
+  const [sessions, setSessions] = useState<Session[]>(initialSessions ?? [])
+  const [activeSessionId, _setActiveSessionId] = useState<string | null>(
+    hasInitialSessions ? initialSessions[0].id : null
+  )
 
   const setActiveSessionId = useCallback((id: string | null) => {
     _setActiveSessionId(id)
     if (id) localStorage.setItem("acapa:activeSessionId", id)
     else localStorage.removeItem("acapa:activeSessionId")
   }, [])
-  const [initialized, setInitialized] = useState(false)
-  const [connectedSessionIds, setConnectedSessionIds] = useState<Set<string>>(new Set())
-  const [promptingSessionIds, setPromptingSessionIds] = useState<Set<string>>(new Set())
+  const [initialized, setInitialized] = useState(hasInitialSessions)
+  const [connectedSessionIds, setConnectedSessionIds] = useState<Set<string>>(
+    () => new Set(initialSessions?.filter((s) => s.connected).map((s) => s.id) ?? [])
+  )
+  const [promptingSessionIds, setPromptingSessionIds] = useState<Set<string>>(
+    () => new Set(initialSessions?.filter((s) => s.prompting).map((s) => s.id) ?? [])
+  )
 
   const fetchSessions = useCallback(async () => {
     const res = await fetch("/api/sessions")
@@ -43,26 +55,48 @@ export default function SessionLayout() {
 
   // Load sessions on mount
   useEffect(() => {
-    fetchSessions().then((data) => {
-      if (data.length === 0) {
-        fetch("/api/sessions", { method: "POST" })
-          .then((res) => res.json())
-          .then((session: Session) => {
-            setSessions([session])
-            setActiveSessionId(session.id)
-            if (session.connected) {
-              setConnectedSessionIds(new Set([session.id]))
-            }
-            setInitialized(true)
-          })
-      } else {
-        const saved = localStorage.getItem("acapa:activeSessionId")
-        const match = saved && data.some((s) => s.id === saved)
-        setActiveSessionId(match ? saved : data[0].id)
-        setInitialized(true)
+    if (hasInitialSessions) {
+      // Server provided sessions and we're already initialized.
+      // Just check localStorage for a saved active session.
+      const saved = localStorage.getItem("acapa:activeSessionId")
+      if (saved && initialSessions!.some((s) => s.id === saved)) {
+        _setActiveSessionId(saved)
       }
-    })
-  }, [fetchSessions])
+    } else if (hasInitialData) {
+      // Server ran but returned zero sessions — auto-create one client-side
+      fetch("/api/sessions", { method: "POST" })
+        .then((res) => res.json())
+        .then((session: Session) => {
+          setSessions([session])
+          setActiveSessionId(session.id)
+          if (session.connected) {
+            setConnectedSessionIds(new Set([session.id]))
+          }
+          setInitialized(true)
+        })
+    } else {
+      // No server data — fetch client-side (fallback)
+      fetchSessions().then((data) => {
+        if (data.length === 0) {
+          fetch("/api/sessions", { method: "POST" })
+            .then((res) => res.json())
+            .then((session: Session) => {
+              setSessions([session])
+              setActiveSessionId(session.id)
+              if (session.connected) {
+                setConnectedSessionIds(new Set([session.id]))
+              }
+              setInitialized(true)
+            })
+        } else {
+          const saved = localStorage.getItem("acapa:activeSessionId")
+          const match = saved && data.some((s) => s.id === saved)
+          setActiveSessionId(match ? saved : data[0].id)
+          setInitialized(true)
+        }
+      })
+    }
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleCreate = async (agentType?: string) => {
     const res = await fetch("/api/sessions", {
