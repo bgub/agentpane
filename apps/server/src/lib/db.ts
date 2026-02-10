@@ -5,9 +5,9 @@ import fs from "node:fs"
 import path from "node:path"
 
 // AGENTPANE_DATA_DIR overrides the base directory (set by bin script for npx).
-// Default: navigate from import.meta.dirname to monorepo root (works for both src/ and dist/).
+// Default for dev: navigate from import.meta.dirname to monorepo root.
 const baseDir = process.env.AGENTPANE_DATA_DIR || path.resolve(import.meta.dirname, "../../../..")
-const dataDir = path.resolve(baseDir, "data")
+const dataDir = process.env.AGENTPANE_DATA_DIR || path.resolve(baseDir, "data")
 if (!fs.existsSync(dataDir)) {
   fs.mkdirSync(dataDir, { recursive: true })
 }
@@ -56,7 +56,7 @@ const migrations = Effect.gen(function* () {
   `
 })
 
-const dbPath = path.resolve(baseDir, "data", "agentpane.db")
+const dbPath = path.resolve(dataDir, "agentpane.db")
 
 const SqliteBaseLive = SqliteNode.layer({ filename: dbPath })
 

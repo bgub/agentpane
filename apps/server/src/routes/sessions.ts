@@ -62,7 +62,6 @@ app.post("/", async (c) => {
       const cwd = body.cwd || session.cwd
       if (body.cwd && body.cwd !== session.cwd) {
         yield* repo.updateCwd(session.id, body.cwd)
-        session.cwd = body.cwd
       }
 
       // Ensure broadcaster exists immediately so EventSource works

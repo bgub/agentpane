@@ -21,7 +21,7 @@ export function BackendOfflineScreen() {
         </div>
 
         <div className="rounded-lg border border-[var(--t-border)] bg-[var(--t-surface)] px-4 py-3">
-          <code className="text-xs text-[var(--t-accent)] font-mono">pnpm dev</code>
+          <code className="text-xs text-[var(--t-accent)] font-mono">npx agentpane</code>
         </div>
 
         <button
