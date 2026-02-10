@@ -1,6 +1,6 @@
 {
   "name": "agentpane",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Local server for AgentPane — web interface for AI coding agents",
   "type": "module",
   "bin": {
