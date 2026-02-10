@@ -1,9 +1,31 @@
 import { Hono } from "hono"
 import { streamSSE } from "hono/streaming"
+import type { Context } from "hono"
 import { Effect, Exit } from "effect"
 import { AppRuntime } from "../lib/runtime.js"
 import { SessionRepo } from "../lib/session-repo.js"
 import { AcpClient } from "../lib/acp-client.js"
+
+const matchRouteExit = <A>(
+  exit: Exit.Exit<A, unknown>,
+  c: Context,
+  successStatus: 200 | 201 = 200
+) =>
+  Exit.match(exit, {
+    onFailure: (cause) => {
+      if (cause._tag === "Fail") {
+        const err = cause.error as { _tag?: string; message?: string }
+        switch (err._tag) {
+          case "SessionNotFoundError":
+            return c.json({ error: "Session not found" }, 404)
+          case "AcpConnectionError":
+            return c.json({ error: err.message }, 502)
+        }
+      }
+      return c.json({ error: "Internal error" }, 500)
+    },
+    onSuccess: (result) => c.json(result, successStatus),
+  })
 
 const app = new Hono()
 
@@ -50,15 +72,7 @@ app.post("/", async (c) => {
     })
   )
 
-  return Exit.match(exit, {
-    onFailure: (cause) => {
-      if (cause._tag === "Fail" && cause.error._tag === "AcpConnectionError") {
-        return c.json({ error: cause.error.message }, 502)
-      }
-      return c.json({ error: "Internal error" }, 500)
-    },
-    onSuccess: (result) => c.json(result, 201),
-  })
+  return matchRouteExit(exit, c, 201)
 })
 
 // GET /sessions/status — quick connection/prompting status check
@@ -84,15 +98,7 @@ app.get("/:id", async (c) => {
       return { ...session, connected }
     })
   )
-  return Exit.match(exit, {
-    onFailure: (cause) => {
-      const error = cause._tag === "Fail" && cause.error._tag === "SessionNotFoundError"
-        ? { error: "Session not found" }
-        : { error: "Internal error" }
-      return c.json(error, 404)
-    },
-    onSuccess: (session) => c.json(session),
-  })
+  return matchRouteExit(exit, c)
 })
 
 // PATCH /sessions/:id — rename a session
@@ -102,10 +108,7 @@ app.patch("/:id", async (c) => {
   const exit = await AppRuntime.runPromiseExit(
     Effect.flatMap(SessionRepo, (repo) => repo.rename(id, body.name))
   )
-  return Exit.match(exit, {
-    onFailure: () => c.json({ error: "Session not found" }, 404),
-    onSuccess: (session) => c.json(session),
-  })
+  return matchRouteExit(exit, c)
 })
 
 // DELETE /sessions/:id — delete a session
@@ -150,15 +153,7 @@ app.post("/:id/prompt", async (c) => {
     })
   )
 
-  return Exit.match(exit, {
-    onFailure: (cause) => {
-      if (cause._tag === "Fail" && cause.error._tag === "AcpConnectionError") {
-        return c.json({ error: cause.error.message }, 502)
-      }
-      return c.json({ error: "Internal error" }, 500)
-    },
-    onSuccess: (result) => c.json(result),
-  })
+  return matchRouteExit(exit, c)
 })
 
 // POST /sessions/:id/cancel — cancel an in-progress prompt
@@ -238,20 +233,7 @@ app.post("/:id/connect", async (c) => {
       return yield* acp.connect(id, session.cwd, session.agent_type)
     })
   )
-  return Exit.match(exit, {
-    onFailure: (cause) => {
-      if (cause._tag === "Fail") {
-        if (cause.error._tag === "SessionNotFoundError") {
-          return c.json({ error: "Session not found" }, 404)
-        }
-        if (cause.error._tag === "AcpConnectionError") {
-          return c.json({ error: cause.error.message }, 502)
-        }
-      }
-      return c.json({ error: "Internal error" }, 500)
-    },
-    onSuccess: (result) => c.json(result),
-  })
+  return matchRouteExit(exit, c)
 })
 
 // DELETE /sessions/:id/connect — disconnect agent

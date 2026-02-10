@@ -12,11 +12,13 @@ export class EventBroadcaster {
   private subscribers = new Map<string, Subscriber>()
   private nextSubId = 0
   private eventCounter = 0
-  private buffer: BufferedEvent[] = []
-  private bufferCapacity: number
+  // Circular buffer: fixed-size array with head pointer
+  private ring: (BufferedEvent | undefined)[]
+  private head = 0 // next write position
+  private size = 0
 
-  constructor(bufferCapacity = 1000) {
-    this.bufferCapacity = bufferCapacity
+  constructor(private readonly bufferCapacity = 1000) {
+    this.ring = new Array(bufferCapacity)
   }
 
   get latestEventId(): number {
@@ -37,26 +39,15 @@ export class EventBroadcaster {
 
         // Replay buffered events then register — all synchronous in start(),
         // so no gap between replay and live events (JS single-threaded)
-        if (afterEventId !== undefined) {
-          for (const evt of this.buffer) {
-            if (evt.id > afterEventId) {
-              try {
-                controller.enqueue(evt.payload)
-              } catch {
-                subscriber.closed = true
-                return
-              }
-            }
-          }
-        } else {
-          // No afterEventId — replay entire buffer
-          for (const evt of this.buffer) {
-            try {
-              controller.enqueue(evt.payload)
-            } catch {
-              subscriber.closed = true
-              return
-            }
+        const start = (this.head - this.size + this.bufferCapacity) % this.bufferCapacity
+        for (let i = 0; i < this.size; i++) {
+          const evt = this.ring[(start + i) % this.bufferCapacity]!
+          if (afterEventId !== undefined && evt.id <= afterEventId) continue
+          try {
+            controller.enqueue(evt.payload)
+          } catch {
+            subscriber.closed = true
+            return
           }
         }
 
@@ -74,11 +65,10 @@ export class EventBroadcaster {
     const id = ++this.eventCounter
     const payload = `id: ${id}\ndata: ${JSON.stringify(eventData)}\n\n`
 
-    // Store in ring buffer
-    if (this.buffer.length >= this.bufferCapacity) {
-      this.buffer.shift()
-    }
-    this.buffer.push({ id, payload })
+    // Store in circular buffer (O(1))
+    this.ring[this.head] = { id, payload }
+    this.head = (this.head + 1) % this.bufferCapacity
+    if (this.size < this.bufferCapacity) this.size++
 
     // Deliver to live subscribers
     const dead: string[] = []

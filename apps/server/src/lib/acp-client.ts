@@ -82,10 +82,38 @@ export class AcpClient extends Context.Tag("@acapa/AcpClient")<
       const runPromise = Runtime.runPromise(runtime)
 
       const connections = new Map<string, AgentConnection>()
+      const promptingSessions = new Set<string>()
       // Session-level broadcasters — separate from connections so they survive disconnects
       const broadcasters = new Map<string, EventBroadcaster>()
+      // Pending idle cleanup timers for broadcasters
+      const idleTimers = new Map<string, ReturnType<typeof setTimeout>>()
+      const BROADCASTER_IDLE_MS = 5 * 60 * 1000 // 5 minutes
+
+      const scheduleIdleCleanup = (sessionId: string): void => {
+        // Don't schedule if connected or already scheduled
+        if (connections.has(sessionId) || idleTimers.has(sessionId)) return
+        const timer = setTimeout(() => {
+          idleTimers.delete(sessionId)
+          const broadcaster = broadcasters.get(sessionId)
+          // Only remove if still disconnected and no subscribers
+          if (broadcaster && !connections.has(sessionId) && broadcaster.subscriberCount === 0) {
+            broadcaster.close()
+            broadcasters.delete(sessionId)
+          }
+        }, BROADCASTER_IDLE_MS)
+        idleTimers.set(sessionId, timer)
+      }
+
+      const cancelIdleCleanup = (sessionId: string): void => {
+        const timer = idleTimers.get(sessionId)
+        if (timer) {
+          clearTimeout(timer)
+          idleTimers.delete(sessionId)
+        }
+      }
 
       const ensureBroadcaster = (sessionId: string): EventBroadcaster => {
+        cancelIdleCleanup(sessionId)
         let broadcaster = broadcasters.get(sessionId)
         if (!broadcaster) {
           broadcaster = new EventBroadcaster()
@@ -95,6 +123,7 @@ export class AcpClient extends Context.Tag("@acapa/AcpClient")<
       }
 
       const removeBroadcaster = (sessionId: string): void => {
+        cancelIdleCleanup(sessionId)
         const broadcaster = broadcasters.get(sessionId)
         if (broadcaster) {
           broadcaster.close()
@@ -140,6 +169,7 @@ export class AcpClient extends Context.Tag("@acapa/AcpClient")<
         }
 
         connections.delete(sessionId)
+        promptingSessions.delete(sessionId)
 
         // Kill all terminal subprocesses
         for (const terminal of conn.terminals.values()) {
@@ -154,7 +184,8 @@ export class AcpClient extends Context.Tag("@acapa/AcpClient")<
           repo.updateAgentSessionId(sessionId, null).pipe(Effect.orDie)
         ).catch(() => {})
 
-        // Note: broadcaster is NOT closed — it survives disconnects
+        // Broadcaster survives disconnects but schedule idle cleanup
+        scheduleIdleCleanup(sessionId)
       }
 
       const makeClient = (
@@ -472,6 +503,7 @@ export class AcpClient extends Context.Tag("@acapa/AcpClient")<
 
           // Set prompting state
           conn.prompting = true
+          promptingSessions.add(sessionId)
           conn.currentAssistantTurnId = assistantTurn.id
           conn.accumulatedText = ""
 
@@ -526,6 +558,7 @@ export class AcpClient extends Context.Tag("@acapa/AcpClient")<
             })
             .finally(() => {
               conn.prompting = false
+              promptingSessions.delete(sessionId)
               conn.currentAssistantTurnId = null
               conn.accumulatedText = ""
             })
@@ -534,26 +567,20 @@ export class AcpClient extends Context.Tag("@acapa/AcpClient")<
         }
       )
 
-      const cancel = Effect.fn("AcpClient.cancel")(
-        function* (sessionId: string) {
-          const conn = connections.get(sessionId)
-          if (conn) {
-            yield* Effect.promise(() =>
-              conn.connection.cancel({ sessionId: conn.agentSessionId })
-            )
-          }
-        }
-      )
+      const cancel = (sessionId: string): Effect.Effect<void> => {
+        const conn = connections.get(sessionId)
+        if (!conn) return Effect.void
+        return Effect.promise(() =>
+          conn.connection.cancel({ sessionId: conn.agentSessionId })
+        )
+      }
 
-      const subscribe = Effect.fn("AcpClient.subscribe")(
-        function* (sessionId: string, afterEventId?: number) {
-          // Always succeeds — uses session-level broadcaster
+      const subscribe = (sessionId: string, afterEventId?: number): Effect.Effect<SubscribeResult> =>
+        Effect.sync(() => {
           const broadcaster = ensureBroadcaster(sessionId)
           const { subscriberId, stream, latestEventId } =
             broadcaster.subscribe(afterEventId)
-
           const conn = connections.get(sessionId)
-
           return {
             subscriberId,
             stream,
@@ -561,50 +588,28 @@ export class AcpClient extends Context.Tag("@acapa/AcpClient")<
             assistantTurnId: conn?.currentAssistantTurnId ?? null,
             latestEventId,
           }
-        }
-      )
+        })
 
-      const unsubscribe = Effect.fn("AcpClient.unsubscribe")(
-        function* (sessionId: string, subscriberId: string) {
+      const unsubscribe = (sessionId: string, subscriberId: string): Effect.Effect<void> =>
+        Effect.sync(() => {
           const broadcaster = broadcasters.get(sessionId)
-          if (broadcaster) {
-            broadcaster.unsubscribe(subscriberId)
-          }
-        }
-      )
+          if (broadcaster) broadcaster.unsubscribe(subscriberId)
+        })
 
-      const disconnect = Effect.fn("AcpClient.disconnect")(
-        function* (sessionId: string) {
+      const disconnect = (sessionId: string): Effect.Effect<void> =>
+        Effect.sync(() => {
           const conn = connections.get(sessionId)
-          if (conn) {
-            // Mark as cleaned to prevent the async cleanup handlers from
-            // running after we've already cleaned up
-            conn.cleaned = true
-            connections.delete(sessionId)
-            // Kill all terminal subprocesses
-            for (const terminal of conn.terminals.values()) {
-              if (!terminal.process.killed) {
-                terminal.process.kill()
-              }
-            }
-            conn.terminals.clear()
-            if (!conn.process.killed) {
-              conn.process.kill()
-            }
-            // Broadcast disconnected via session-level broadcaster (keep broadcaster alive)
-            const broadcaster = broadcasters.get(sessionId)
-            if (broadcaster) {
-              broadcaster.broadcast({ sessionUpdate: "disconnected" })
-            }
+          if (!conn) return
+          // Kill the main process (triggers cleanupConnection via exit/close handlers,
+          // but we call it directly to ensure synchronous cleanup)
+          if (!conn.process.killed) {
+            conn.process.kill()
           }
-        }
-      )
+          cleanupConnection(sessionId, conn)
+        })
 
-      const isConnected = Effect.fn("AcpClient.isConnected")(
-        function* (sessionId: string) {
-          return connections.has(sessionId)
-        }
-      )
+      const isConnected = (sessionId: string): Effect.Effect<boolean> =>
+        Effect.succeed(connections.has(sessionId))
 
       return AcpClient.of({
         connect,
@@ -616,12 +621,7 @@ export class AcpClient extends Context.Tag("@acapa/AcpClient")<
         unsubscribe,
         connectedSessionIds: () =>
           new Set(connections.keys()) as ReadonlySet<string>,
-        promptingSessionIds: () =>
-          new Set(
-            [...connections.entries()]
-              .filter(([, c]) => c.prompting)
-              .map(([id]) => id)
-          ) as ReadonlySet<string>,
+        promptingSessionIds: () => promptingSessions as ReadonlySet<string>,
         ensureBroadcaster,
         removeBroadcaster,
       })
