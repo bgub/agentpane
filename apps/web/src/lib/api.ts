@@ -8,7 +8,7 @@ export const api = {
     list: (): Promise<Response> =>
       fetch(`${API_BASE}/api/sessions`),
 
-    create: (body?: { name?: string; agent_type?: string }): Promise<Response> =>
+    create: (body?: { name?: string; agent_type?: string; cwd?: string }): Promise<Response> =>
       fetch(`${API_BASE}/api/sessions`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },

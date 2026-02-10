@@ -21,6 +21,9 @@ export const PROVIDERS: Record<string, Provider> = {
 
 export const DEFAULT_PROVIDER = "claude-code"
 
+// Resolve relative to the server package root (apps/server/), not process.cwd()
+const packageRoot = path.resolve(import.meta.dirname, "../..")
+
 export function resolveProviderBin(agentType: string): string {
   const provider = PROVIDERS[agentType]
   if (!provider) {
@@ -29,5 +32,5 @@ export function resolveProviderBin(agentType: string): string {
   if (path.isAbsolute(provider.bin)) {
     return provider.bin
   }
-  return path.resolve(process.cwd(), provider.bin)
+  return path.resolve(packageRoot, provider.bin)
 }

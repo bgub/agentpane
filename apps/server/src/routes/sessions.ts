@@ -58,13 +58,20 @@ app.post("/", async (c) => {
       const acp = yield* AcpClient
       const session = yield* repo.create(body.name, body.agent_type)
 
+      // If cwd provided, update session with it
+      const cwd = body.cwd || session.cwd
+      if (body.cwd && body.cwd !== session.cwd) {
+        yield* repo.updateCwd(session.id, body.cwd)
+        session.cwd = body.cwd
+      }
+
       // Ensure broadcaster exists immediately so EventSource works
       acp.ensureBroadcaster(session.id)
 
       // If agent_type provided, await connection (atomic create+connect)
       let connected = false
       if (body.agent_type) {
-        yield* acp.connect(session.id, session.cwd, session.agent_type)
+        yield* acp.connect(session.id, cwd, session.agent_type)
         connected = true
       }
 

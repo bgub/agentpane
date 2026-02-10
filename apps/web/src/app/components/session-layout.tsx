@@ -244,15 +244,8 @@ export default function SessionLayout() {
 
   const handleSetupStart = useCallback(
     async (agentType: string, cwd: string) => {
-      const res = await api.sessions.create({ agent_type: agentType })
+      const res = await api.sessions.create({ agent_type: agentType, cwd })
       const session: Session = await res.json()
-
-      // If cwd differs from default, reconnect with the right cwd
-      if (cwd !== session.cwd) {
-        await api.sessions.connect(session.id, { agent_type: agentType, cwd })
-        session.cwd = cwd
-        session.agent_type = agentType
-      }
 
       setSessions((prev) => [...prev, session])
       setActiveSessionId(session.id)

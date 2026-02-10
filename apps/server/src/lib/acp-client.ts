@@ -386,6 +386,11 @@ export class AcpClient extends Context.Tag("@agentpane/AcpClient")<
               }),
           })
 
+          // Capture spawn errors (async ENOENT etc.) so they don't crash the server
+          // and can provide a better message if initialize() fails
+          let spawnError: Error | null = null
+          proc.on("error", (err) => { spawnError = err })
+
           if (!proc.stdin || !proc.stdout) {
             proc.kill()
             return yield* new AcpConnectionError({
@@ -419,7 +424,9 @@ export class AcpClient extends Context.Tag("@agentpane/AcpClient")<
             catch: (err) => {
               proc.kill()
               return new AcpConnectionError({
-                message: `ACP initialization failed: ${err}`,
+                message: spawnError
+                  ? `Failed to start ${providerName}: ${spawnError.message}`
+                  : `ACP initialization failed: ${err}`,
               })
             },
           })
