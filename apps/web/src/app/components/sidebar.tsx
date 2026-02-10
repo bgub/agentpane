@@ -8,7 +8,8 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { ScrollArea } from "@/components/ui/scroll-area"
-import { EllipsisVertical, Loader2, Plus } from "lucide-react"
+import { EllipsisVertical, Loader2, Plus, Sun, Moon, Monitor } from "lucide-react"
+import { useTheme } from "next-themes"
 import { PROVIDER_INFO } from "./providers"
 import { useSession } from "./session-provider"
 import type { Session } from "@/lib/types"
@@ -26,6 +27,10 @@ export default function Sidebar() {
     deleteSession,
     renameSession,
   } = useSession()
+
+  const { theme, setTheme, resolvedTheme } = useTheme()
+  const [mounted, setMounted] = useState(false)
+  useEffect(() => setMounted(true), [])
 
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editValue, setEditValue] = useState("")
@@ -155,6 +160,14 @@ export default function Sidebar() {
 
   return (
     <div className="flex h-full w-56 min-h-0 flex-col bg-[var(--t-surface)] border-r border-[var(--t-border)]">
+      {/* Header */}
+      <div className="flex h-10 shrink-0 items-center justify-between px-4 border-b border-[var(--t-border)]">
+        <span className="text-xs font-semibold text-[var(--t-bright)]">AgentPane</span>
+        {showCheckingSpinner && (
+          <Loader2 className="size-3 animate-spin text-[var(--t-dim)]" />
+        )}
+      </div>
+
       {/* New session button */}
       <div className="shrink-0 px-3 pt-3 pb-2">
         <button
@@ -193,11 +206,17 @@ export default function Sidebar() {
         </div>
       </ScrollArea>
 
-      {/* Branding */}
+      {/* Theme toggle */}
       <div className="shrink-0 h-12 flex items-center px-3 border-t border-[var(--t-border)]">
-        <span className="text-xs font-medium text-[var(--t-muted)]">AgentPane</span>
-        {showCheckingSpinner && (
-          <Loader2 className="ml-auto size-3 animate-spin text-[var(--t-dim)]" />
+        {mounted && (
+          <button
+            onClick={() => setTheme(theme === "dark" ? "light" : theme === "light" ? "system" : "dark")}
+            className="flex items-center gap-2 text-xs text-[var(--t-muted)] hover:text-[var(--t-bright)] transition-colors cursor-pointer"
+            title={`Theme: ${theme}`}
+          >
+            {resolvedTheme === "dark" ? <Moon className="size-3.5" /> : resolvedTheme === "light" ? <Sun className="size-3.5" /> : <Monitor className="size-3.5" />}
+            <span className="capitalize">{theme}</span>
+          </button>
         )}
       </div>
     </div>

@@ -39,29 +39,26 @@
 :root {
   --radius: 0.625rem;
 
-  /* Core palette — warm dark with good legibility */
-  --t-bg: #101010;
-  --t-surface: #171717;
-  --t-elevated: #1e1e1e;
-  --t-border: #272727;
-  --t-dim: #4a4a4a;
-  --t-muted: #707070;
-  --t-text: #b0b0b0;
-  --t-bright: #cccccc;
-  --t-white: #dcdcdc;
+  /* Light palette */
+  --t-bg: #fafafa;
+  --t-surface: #f0f0f0;
+  --t-elevated: #e6e6e6;
+  --t-border: #d8d8d8;
+  --t-dim: #bcbcbc;
+  --t-muted: #888888;
+  --t-text: #555555;
+  --t-bright: #333333;
+  --t-white: #1a1a1a;
 
-  /* Accent — soft warm amber */
-  --t-accent: #c49a6c;
-  --t-accent-dim: #9a7a55;
+  --t-accent: #a07840;
+  --t-accent-dim: #c49a6c;
 
-  /* Semantic status colors */
-  --t-green: #6aad7a;
-  --t-amber: #d4a04e;
-  --t-blue: #6a9ec4;
-  --t-red: #c46a6a;
-}
+  --t-green: #3d8a50;
+  --t-amber: #b8862c;
+  --t-blue: #4a7fa3;
+  --t-red: #b04a4a;
 
-.dark {
+  /* shadcn mappings */
   --background: var(--t-bg);
   --foreground: var(--t-text);
   --card: var(--t-surface);
@@ -80,6 +77,27 @@
   --border: var(--t-border);
   --input: var(--t-border);
   --ring: var(--t-accent-dim);
+}
+
+.dark {
+  /* Dark palette — warm dark with good legibility */
+  --t-bg: #101010;
+  --t-surface: #171717;
+  --t-elevated: #1e1e1e;
+  --t-border: #272727;
+  --t-dim: #4a4a4a;
+  --t-muted: #707070;
+  --t-text: #b0b0b0;
+  --t-bright: #cccccc;
+  --t-white: #dcdcdc;
+
+  --t-accent: #c49a6c;
+  --t-accent-dim: #9a7a55;
+
+  --t-green: #6aad7a;
+  --t-amber: #d4a04e;
+  --t-blue: #6a9ec4;
+  --t-red: #c46a6a;
 }
 
 @layer base {
