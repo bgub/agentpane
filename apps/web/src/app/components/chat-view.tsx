@@ -27,7 +27,6 @@ interface ChatViewProps {
   sessionId: string
   cwd: string
   agentType: string
-  active: boolean
   connected: boolean
   onPromptingChange?: (sessionId: string, prompting: boolean) => void
   onConnectionChange?: (sessionId: string, connected: boolean, config?: { cwd: string; agent_type: string }) => void
@@ -235,7 +234,6 @@ export default function ChatView({
   sessionId,
   cwd,
   agentType,
-  active,
   connected,
   onPromptingChange,
   onConnectionChange,
@@ -244,7 +242,6 @@ export default function ChatView({
   const [streamingBlocks, setStreamingBlocks] = useState<StreamingBlock[]>([])
   const [input, setInput] = useState("")
   const [prompting, setPrompting] = useState(false)
-  const [loaded, setLoaded] = useState(false)
   const [connecting, setConnecting] = useState(false)
 
   const scrollRef = useRef<HTMLDivElement>(null)
@@ -259,13 +256,13 @@ export default function ChatView({
     if (el) el.scrollTop = el.scrollHeight
   }, [turns, streamingBlocks])
 
-  // Focus textarea when active and capture keyboard input
+  // Focus textarea
   useEffect(() => {
-    if (active && !prompting && !connecting && agentType) textareaRef.current?.focus()
-  }, [active, prompting, connecting, agentType])
+    if (!prompting && !connecting && agentType) textareaRef.current?.focus()
+  }, [prompting, connecting, agentType])
 
   useEffect(() => {
-    if (!active || !agentType) return
+    if (!agentType) return
 
     const handleGlobalKeyDown = (e: globalThis.KeyboardEvent) => {
       if (
@@ -280,7 +277,7 @@ export default function ChatView({
 
     window.addEventListener("keydown", handleGlobalKeyDown)
     return () => window.removeEventListener("keydown", handleGlobalKeyDown)
-  }, [active, agentType])
+  }, [agentType])
 
   // Notify parent of prompting state
   useEffect(() => {
@@ -293,9 +290,8 @@ export default function ChatView({
       .then((res) => res.json())
       .then((data: TurnData[]) => {
         setTurns(data)
-        setLoaded(true)
       })
-      .catch(() => setLoaded(true))
+      .catch(() => {})
   }, [sessionId])
 
   // Re-fetch conversation from DB
@@ -310,10 +306,8 @@ export default function ChatView({
       .catch(() => {})
   }, [sessionId])
 
-  // EventSource for SSE events — only when active to avoid hitting browser connection limits
+  // EventSource for SSE events
   useEffect(() => {
-    if (!active) return
-
     const es = new EventSource(api.eventsUrl(sessionId))
 
     es.onmessage = (event) => {
@@ -367,7 +361,7 @@ export default function ChatView({
       blocksRef.current = []
       setStreamingBlocks([])
     }
-  }, [active, sessionId, refreshConversation, onConnectionChange])
+  }, [sessionId, refreshConversation, onConnectionChange])
 
   const connectAgent = useCallback(async () => {
     if (connecting) return
@@ -515,10 +509,6 @@ export default function ChatView({
       {/* Message stream */}
       <div ref={scrollRef} className="flex-1 min-h-0 overflow-y-auto">
         <div className="max-w-3xl mx-auto px-5 py-6 space-y-1">
-          {!loaded && (
-            <div className="text-sm text-[var(--t-muted)] py-2">Loading...</div>
-          )}
-
           {turns.map((turn) => (
             <div key={turn.id}>
               {turn.role === "user" ? (

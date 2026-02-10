@@ -8,43 +8,29 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { ScrollArea } from "@/components/ui/scroll-area"
-import { EllipsisVertical, Plus } from "lucide-react"
+import { EllipsisVertical, Loader2, Plus } from "lucide-react"
 import { PROVIDER_INFO } from "./providers"
+import { useSession } from "./session-provider"
+import type { Session } from "@/lib/types"
 
-interface Session {
-  id: string
-  name: string
-  cwd: string
-  agent_type: string
-  created_at: number
-}
+export default function Sidebar() {
+  const {
+    sessions,
+    activeSessionId,
+    connectedSessionIds,
+    promptingSessionIds,
+    showSetup,
+    backendStatus,
+    setActiveSession,
+    createSession,
+    deleteSession,
+    renameSession,
+  } = useSession()
 
-interface SidebarProps {
-  sessions: Session[]
-  activeSessionId: string | null
-  connectedSessionIds: Set<string>
-  promptingSessionIds: Set<string>
-  showSetup: boolean
-  onSelect: (id: string) => void
-  onCreate: () => void
-  onDelete: (id: string) => void
-  onRename: (id: string, name: string) => void
-}
-
-export default function Sidebar({
-  sessions,
-  activeSessionId,
-  connectedSessionIds,
-  promptingSessionIds,
-  showSetup,
-  onSelect,
-  onCreate,
-  onDelete,
-  onRename,
-}: SidebarProps) {
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editValue, setEditValue] = useState("")
   const editInputRef = useRef<HTMLInputElement>(null)
+  const [showCheckingSpinner, setShowCheckingSpinner] = useState(false)
 
   useEffect(() => {
     if (editingId) {
@@ -53,6 +39,15 @@ export default function Sidebar({
     }
   }, [editingId])
 
+  useEffect(() => {
+    if (backendStatus !== "checking") {
+      setShowCheckingSpinner(false)
+      return
+    }
+    const timer = setTimeout(() => setShowCheckingSpinner(true), 2000)
+    return () => clearTimeout(timer)
+  }, [backendStatus])
+
   const startRename = (id: string, currentName: string) => {
     setEditingId(id)
     setEditValue(currentName)
@@ -60,7 +55,7 @@ export default function Sidebar({
 
   const commitRename = () => {
     if (editingId && editValue.trim()) {
-      onRename(editingId, editValue.trim())
+      renameSession(editingId, editValue.trim())
     }
     setEditingId(null)
   }
@@ -95,7 +90,7 @@ export default function Sidebar({
     return (
       <div
         key={session.id}
-        onClick={() => onSelect(session.id)}
+        onClick={() => setActiveSession(session.id)}
         className={`group flex items-center gap-2.5 px-3 py-2 cursor-pointer text-[13px] transition-colors ${
           isActive
             ? "bg-[var(--t-elevated)] text-[var(--t-white)] border-l-2 border-l-[var(--t-accent)]"
@@ -145,7 +140,7 @@ export default function Sidebar({
                   variant="destructive"
                   onClick={(e) => {
                     e.stopPropagation()
-                    onDelete(session.id)
+                    deleteSession(session.id)
                   }}
                 >
                   Delete
@@ -163,7 +158,7 @@ export default function Sidebar({
       {/* New session button */}
       <div className="shrink-0 px-3 pt-3 pb-2">
         <button
-          onClick={() => onCreate()}
+          onClick={() => createSession()}
           className={`flex w-full items-center justify-center gap-1.5 rounded-md border px-3 py-2 text-xs font-medium transition-colors cursor-pointer ${
             showSetup
               ? "border-[var(--t-accent)] bg-[var(--t-accent)]/10 text-[var(--t-accent)]"
@@ -201,6 +196,9 @@ export default function Sidebar({
       {/* Branding */}
       <div className="shrink-0 h-12 flex items-center px-3 border-t border-[var(--t-border)]">
         <span className="text-xs font-medium text-[var(--t-muted)]">AgentPane</span>
+        {showCheckingSpinner && (
+          <Loader2 className="ml-auto size-3 animate-spin text-[var(--t-dim)]" />
+        )}
       </div>
     </div>
   )
