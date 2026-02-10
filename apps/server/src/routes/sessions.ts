@@ -162,6 +162,26 @@ app.post("/:id/prompt", async (c) => {
   return matchRouteExit(exit, c)
 })
 
+// POST /sessions/:id/permission — respond to a permission request
+app.post("/:id/permission", async (c) => {
+  const id = c.req.param("id")
+  const body = await c.req.json()
+  const { requestId, optionId } = body
+
+  if (!requestId || !optionId) {
+    return c.json({ error: "requestId and optionId are required" }, 400)
+  }
+
+  const exit = await AppRuntime.runPromiseExit(
+    Effect.gen(function* () {
+      const acp = yield* AcpClient
+      yield* acp.respondToPermission(id, requestId, optionId)
+      return { ok: true }
+    })
+  )
+  return matchRouteExit(exit, c)
+})
+
 // POST /sessions/:id/cancel — cancel an in-progress prompt
 app.post("/:id/cancel", async (c) => {
   const id = c.req.param("id")

@@ -44,6 +44,13 @@ export const api = {
     cancel: (id: string): Promise<Response> =>
       fetch(`${API_BASE}/api/sessions/${id}/cancel`, { method: "POST" }),
 
+    permission: (id: string, requestId: string, optionId: string): Promise<Response> =>
+      fetch(`${API_BASE}/api/sessions/${id}/permission`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ requestId, optionId }),
+      }),
+
     connect: (id: string, body?: { agent_type?: string; cwd?: string }): Promise<Response> =>
       fetch(`${API_BASE}/api/sessions/${id}/connect`, {
         method: "POST",

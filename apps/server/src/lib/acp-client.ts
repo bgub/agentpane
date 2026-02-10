@@ -9,6 +9,7 @@ import {
   RequestError,
   type Client,
   type Agent,
+  type RequestPermissionOutcome,
 } from "@agentclientprotocol/sdk"
 import { nodeToWebWritable, nodeToWebReadable } from "@zed-industries/claude-code-acp"
 import { SessionRepo } from "./session-repo.js"
@@ -39,6 +40,7 @@ interface AgentConnection {
   currentAssistantTurnId: string | null
   accumulatedText: string
   terminals: Map<string, TerminalState>
+  pendingPermissions: Map<string, { resolve: (outcome: RequestPermissionOutcome) => void }>
   cwd: string
   cleaned: boolean
 }
@@ -68,6 +70,11 @@ export class AcpClient extends Context.Tag("@agentpane/AcpClient")<
     readonly isConnected: (sessionId: string) => Effect.Effect<boolean>
     readonly subscribe: (sessionId: string, afterEventId?: number) => Effect.Effect<SubscribeResult>
     readonly unsubscribe: (sessionId: string, subscriberId: string) => Effect.Effect<void>
+    readonly respondToPermission: (
+      sessionId: string,
+      requestId: string,
+      optionId: string
+    ) => Effect.Effect<void, AcpConnectionError>
     readonly connectedSessionIds: () => ReadonlySet<string>
     readonly promptingSessionIds: () => ReadonlySet<string>
     readonly ensureBroadcaster: (sessionId: string) => EventBroadcaster
@@ -162,6 +169,12 @@ export class AcpClient extends Context.Tag("@agentpane/AcpClient")<
         if (conn.cleaned) return
         conn.cleaned = true
 
+        // Resolve any pending permission requests as cancelled
+        for (const pending of conn.pendingPermissions.values()) {
+          pending.resolve({ outcome: "cancelled" })
+        }
+        conn.pendingPermissions.clear()
+
         // Broadcast disconnected event via session-level broadcaster
         const broadcaster = broadcasters.get(sessionId)
         if (broadcaster) {
@@ -230,16 +243,25 @@ export class AcpClient extends Context.Tag("@agentpane/AcpClient")<
           },
 
           requestPermission: async (params) => {
-            const firstOption = params.options[0]
-            if (firstOption) {
-              return {
-                outcome: {
-                  outcome: "selected",
-                  optionId: firstOption.optionId,
-                },
-              }
+            const conn = connRef.current
+            if (!conn) return { outcome: { outcome: "cancelled" } }
+
+            const requestId = crypto.randomUUID()
+            const broadcaster = broadcasters.get(sessionId)
+            if (broadcaster) {
+              broadcaster.broadcast({
+                sessionUpdate: "permission_request",
+                requestId,
+                toolCall: params.toolCall,
+                options: params.options,
+              })
             }
-            return { outcome: { outcome: "cancelled" } }
+
+            const outcome = await new Promise<RequestPermissionOutcome>((resolve) => {
+              conn.pendingPermissions.set(requestId, { resolve })
+            })
+            conn.pendingPermissions.delete(requestId)
+            return { outcome }
           },
 
           readTextFile: async (params) => {
@@ -456,6 +478,7 @@ export class AcpClient extends Context.Tag("@agentpane/AcpClient")<
             currentAssistantTurnId: null,
             accumulatedText: "",
             terminals: new Map(),
+            pendingPermissions: new Map(),
             cwd: effectiveCwd,
             cleaned: false,
           }
@@ -578,6 +601,13 @@ export class AcpClient extends Context.Tag("@agentpane/AcpClient")<
       const cancel = (sessionId: string): Effect.Effect<void> => {
         const conn = connections.get(sessionId)
         if (!conn) return Effect.void
+
+        // Resolve any pending permission requests as cancelled
+        for (const pending of conn.pendingPermissions.values()) {
+          pending.resolve({ outcome: "cancelled" })
+        }
+        conn.pendingPermissions.clear()
+
         return Effect.promise(() =>
           conn.connection.cancel({ sessionId: conn.agentSessionId })
         )
@@ -616,6 +646,35 @@ export class AcpClient extends Context.Tag("@agentpane/AcpClient")<
           cleanupConnection(sessionId, conn)
         })
 
+      const respondToPermission = Effect.fn("AcpClient.respondToPermission")(
+        function* (sessionId: string, requestId: string, optionId: string) {
+          const conn = connections.get(sessionId)
+          if (!conn) {
+            return yield* new AcpConnectionError({
+              message: "Agent not connected for this session",
+            })
+          }
+
+          const pending = conn.pendingPermissions.get(requestId)
+          if (!pending) {
+            return yield* new AcpConnectionError({
+              message: "No pending permission request with this ID",
+            })
+          }
+
+          pending.resolve({ outcome: "selected", optionId })
+          conn.pendingPermissions.delete(requestId)
+
+          const broadcaster = broadcasters.get(sessionId)
+          if (broadcaster) {
+            broadcaster.broadcast({
+              sessionUpdate: "permission_resolved",
+              requestId,
+            })
+          }
+        }
+      )
+
       const isConnected = (sessionId: string): Effect.Effect<boolean> =>
         Effect.succeed(connections.has(sessionId))
 
@@ -624,6 +683,7 @@ export class AcpClient extends Context.Tag("@agentpane/AcpClient")<
         prompt,
         cancel,
         disconnect,
+        respondToPermission,
         isConnected,
         subscribe,
         unsubscribe,

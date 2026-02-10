@@ -32,6 +32,12 @@ interface ChatViewProps {
   onConnectionChange?: (sessionId: string, connected: boolean, config?: { cwd: string; agent_type: string }) => void
 }
 
+interface PermissionOption {
+  optionId: string
+  name: string
+  kind: string // "allow_once" | "allow_always" | "reject_once" | "reject_always"
+}
+
 interface ToolCallState {
   toolCallId: string
   title: string
@@ -39,6 +45,7 @@ interface ToolCallState {
   status?: string
   rawInput?: unknown
   rawOutput?: unknown
+  permissionRequest?: { requestId: string; options: PermissionOption[] } | undefined
 }
 
 type StreamingBlock =
@@ -241,9 +248,57 @@ function extractCommand(raw: unknown): string | null {
   return null
 }
 
-function ToolCallBox({ state }: { state: ToolCallState }) {
+function PermissionButtons({
+  sessionId,
+  requestId,
+  options,
+}: {
+  sessionId: string
+  requestId: string
+  options: PermissionOption[]
+}) {
+  const [responding, setResponding] = useState(false)
+
+  const handleClick = (optionId: string) => {
+    setResponding(true)
+    api.sessions.permission(sessionId, requestId, optionId).catch(() => {
+      setResponding(false)
+    })
+  }
+
+  if (responding) return null
+
+  return (
+    <div className="flex items-center gap-2 pt-1">
+      {options.map((opt) => {
+        const isReject = opt.kind.startsWith("reject")
+        return (
+          <button
+            key={opt.optionId}
+            onClick={() => handleClick(opt.optionId)}
+            className={`px-2.5 py-1 text-xs font-medium rounded border transition-colors ${
+              isReject
+                ? "border-[var(--t-red)]/40 text-[var(--t-red)] hover:bg-[var(--t-red)]/10"
+                : "border-[var(--t-green)]/40 text-[var(--t-green)] hover:bg-[var(--t-green)]/10"
+            }`}
+          >
+            {opt.name}
+          </button>
+        )
+      })}
+    </div>
+  )
+}
+
+function ToolCallBox({ state, sessionId }: { state: ToolCallState; sessionId?: string }) {
   const isEdit = state.kind === "edit" && !!parseEditChanges(state.rawInput)
-  const [expanded, setExpanded] = useState(isEdit)
+  const hasPendingPermission = !!state.permissionRequest
+  const [expanded, setExpanded] = useState(isEdit || hasPendingPermission)
+
+  // Auto-expand when permission request arrives
+  useEffect(() => {
+    if (hasPendingPermission) setExpanded(true)
+  }, [hasPendingPermission])
 
   const outputText = extractOutputText(state.rawOutput)
   const command = extractCommand(state.rawInput)
@@ -273,7 +328,7 @@ function ToolCallBox({ state }: { state: ToolCallState }) {
           <span className="text-[var(--t-dim)] text-[10px]">{expanded ? "\u25BE" : "\u25B8"}</span>
         )}
       </button>
-      {expanded && hasDetails && (
+      {expanded && (hasDetails || hasPendingPermission) && (
         <div className="border-t border-[var(--t-border)] px-3 py-2 space-y-2">
           {isEdit ? (
             <EditDiffView rawInput={state.rawInput} />
@@ -285,6 +340,13 @@ function ToolCallBox({ state }: { state: ToolCallState }) {
             </pre>
           ) : (
             <GenericDetails rawInput={rawInput} outputText={outputText} rawOutput={rawOutput} />
+          )}
+          {hasPendingPermission && sessionId && (
+            <PermissionButtons
+              sessionId={sessionId}
+              requestId={state.permissionRequest!.requestId}
+              options={state.permissionRequest!.options}
+            />
           )}
         </div>
       )}
@@ -457,6 +519,41 @@ function applyEventToBlocks(
       if (data.rawInput !== undefined) tc.state.rawInput = data.rawInput
       if (data.rawOutput !== undefined) tc.state.rawOutput = data.rawOutput
     }
+  } else if (eventType === "permission_request") {
+    const toolCall = data.toolCall as Record<string, unknown> | undefined
+    const toolCallId = toolCall?.toolCallId as string | undefined
+    const requestId = data.requestId as string
+    const options = data.options as PermissionOption[]
+
+    if (toolCallId) {
+      const existing = blocks.find(
+        (b): b is StreamingBlock & { type: "tool_call" } =>
+          b.type === "tool_call" && b.state.toolCallId === toolCallId
+      )
+      if (existing) {
+        existing.state.permissionRequest = { requestId, options }
+      } else {
+        // Create a new tool call block from the permission request's toolCall data
+        const state: ToolCallState = {
+          toolCallId,
+          title: (toolCall?.title as string) || "Tool call",
+          status: (toolCall?.status as string) || "pending",
+          permissionRequest: { requestId, options },
+        }
+        if (toolCall?.kind != null) state.kind = toolCall.kind as string
+        if (toolCall?.rawInput !== undefined) state.rawInput = toolCall.rawInput
+        blocks.push({ type: "tool_call", state })
+      }
+    }
+  } else if (eventType === "permission_resolved") {
+    const requestId = data.requestId as string
+    const tc = blocks.find(
+      (b): b is StreamingBlock & { type: "tool_call" } =>
+        b.type === "tool_call" && b.state.permissionRequest?.requestId === requestId
+    )
+    if (tc) {
+      tc.state.permissionRequest = undefined
+    }
   }
 
   return [...blocks]
@@ -603,7 +700,7 @@ export default function ChatView({
           setPrompting(false)
           onConnectionChange?.(sessionId, false)
         } else {
-          // agent_message_chunk, tool_call, tool_call_update
+          // agent_message_chunk, tool_call, tool_call_update, permission_request, permission_resolved
           const updated = applyEventToBlocks(blocksRef.current, data)
           blocksRef.current = updated
           setStreamingBlocks(updated)
@@ -657,7 +754,7 @@ export default function ChatView({
                       </div>
                     ) : (
                       <div key={b.id} className="pl-5 border-l-2 border-[var(--t-border)]">
-                        <ToolCallBox state={parseToolCallBlock(b)} />
+                        <ToolCallBox state={parseToolCallBlock(b)} sessionId={sessionId} />
                       </div>
                     )
                   )}
@@ -686,7 +783,7 @@ export default function ChatView({
                 </div>
               ) : (
                 <div key={`stream-${i}`} className="pl-5 border-l-2 border-[var(--t-accent)]">
-                  <ToolCallBox state={block.state} />
+                  <ToolCallBox state={block.state} sessionId={sessionId} />
                 </div>
               )
             )}
