@@ -1,0 +1,4 @@
+
+> @acapa/server@0.1.0 typecheck /home/bgub/code/acapa/apps/server
+> tsc --noEmit
+

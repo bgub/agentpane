@@ -1,0 +1,57 @@
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3456"
+
+export const api = {
+  sessions: {
+    list: (): Promise<Response> =>
+      fetch(`${API_BASE}/api/sessions`),
+
+    create: (body?: { name?: string; agent_type?: string }): Promise<Response> =>
+      fetch(`${API_BASE}/api/sessions`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body ?? {}),
+      }),
+
+    get: (id: string): Promise<Response> =>
+      fetch(`${API_BASE}/api/sessions/${id}`),
+
+    rename: (id: string, name: string): Promise<Response> =>
+      fetch(`${API_BASE}/api/sessions/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name }),
+      }),
+
+    delete: (id: string): Promise<Response> =>
+      fetch(`${API_BASE}/api/sessions/${id}`, { method: "DELETE" }),
+
+    status: (): Promise<Response> =>
+      fetch(`${API_BASE}/api/sessions/status`),
+
+    conversation: (id: string): Promise<Response> =>
+      fetch(`${API_BASE}/api/sessions/${id}/conversation`),
+
+    prompt: (id: string, content: string): Promise<Response> =>
+      fetch(`${API_BASE}/api/sessions/${id}/prompt`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ content }),
+      }),
+
+    cancel: (id: string): Promise<Response> =>
+      fetch(`${API_BASE}/api/sessions/${id}/cancel`, { method: "POST" }),
+
+    connect: (id: string, body?: { agent_type?: string; cwd?: string }): Promise<Response> =>
+      fetch(`${API_BASE}/api/sessions/${id}/connect`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body ?? {}),
+      }),
+
+    disconnect: (id: string): Promise<Response> =>
+      fetch(`${API_BASE}/api/sessions/${id}/connect`, { method: "DELETE" }),
+  },
+
+  eventsUrl: (id: string): string =>
+    `${API_BASE}/api/sessions/${id}/events`,
+}

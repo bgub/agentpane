@@ -4,48 +4,62 @@ ACP (Agent Client Protocol) frontend — a web UI for interacting with AI coding
 
 ## Tech Stack
 
-- **Frontend:** Next.js 16, React 19, Tailwind CSS 4
-- **Backend:** Effect.ts services/layers, ManagedRuntime singleton
+- **Monorepo:** Turborepo + pnpm workspaces
+- **Backend (`apps/server`):** Hono + Effect.ts services/layers, standalone Node.js server on port 3456
+- **Frontend (`apps/web`):** Next.js 16, React 19, Tailwind CSS 4 on port 6767
 - **Database:** SQLite via `@effect/sql-sqlite-node` + `better-sqlite3` at `data/acapa.db`
 - **ACP:** `@agentclientprotocol/sdk` + `@zed-industries/claude-code-acp`
-- **Dev server:** `npm run dev` on port 6767
+- **Dev:** `pnpm dev` starts both server and web via Turbo
 
 ## Architecture
 
-### Backend (`src/lib/`)
+### Backend (`apps/server/`)
 
-Effect.ts service layers composed into a single `ManagedRuntime` (`AppRuntime`) shared across all API routes:
+Standalone Hono HTTP server with Effect.ts service layers composed into `ManagedRuntime`:
 
-- `schema.ts` — Effect Schema classes for `Session`, `Turn`, `MessageBlock`, and error types
-- `db.ts` — `SqliteLive` layer (SQLite connection, migrations, WAL mode, foreign keys)
-- `session-repo.ts` — `SessionRepo` service (CRUD for sessions, turns, message blocks)
-- `acp-client.ts` — `AcpClient` service (manages agent subprocesses, ACP connections, prompt streaming)
-- `runtime.ts` — `AppRuntime = ManagedRuntime.make(AcpClient.layer | SessionRepo.layer | SqliteLive)`
+- `src/lib/schema.ts` — Effect Schema classes for `Session`, `Turn`, `MessageBlock`, and error types
+- `src/lib/db.ts` — `SqliteLive` layer (SQLite connection, migrations, WAL mode, foreign keys)
+- `src/lib/session-repo.ts` — `SessionRepo` service (CRUD for sessions, turns, message blocks)
+- `src/lib/acp-client.ts` — `AcpClient` service (agent subprocesses, ACP connections, session-level broadcasters)
+- `src/lib/event-broadcaster.ts` — `EventBroadcaster` class (SSE event buffering + ring buffer for reconnection)
+- `src/lib/runtime.ts` — `AppRuntime = ManagedRuntime.make(AcpClient.layer | SessionRepo.layer | SqliteLive)`
+- `src/lib/providers.ts` — Agent provider config (claude-code, codex)
+- `src/routes/sessions.ts` — All Hono route handlers
+- `src/index.ts` — Entry point, Hono app + `serve()` on port 3456
 
-### API Routes (`src/app/api/sessions/`)
+### API Routes (all in `apps/server/src/routes/sessions.ts`)
 
-- `GET/POST /api/sessions` — list/create sessions (POST auto-connects agent)
-- `GET/PATCH/DELETE /api/sessions/[id]` — get/rename/delete (DELETE disconnects agent)
-- `POST /api/sessions/[id]/prompt` — send prompt, stream response via SSE
-- `GET /api/sessions/[id]/conversation` — get full conversation history
-- `POST/DELETE /api/sessions/[id]/connect` — connect/disconnect agent
+- `GET/POST /api/sessions` — list/create sessions (POST with `agent_type` does atomic create+connect)
+- `GET /api/sessions/status` — quick connection/prompting status check
+- `GET/PATCH/DELETE /api/sessions/:id` — get/rename/delete (DELETE disconnects agent + removes broadcaster)
+- `GET /api/sessions/:id/conversation` — get full conversation history
+- `POST /api/sessions/:id/prompt` — send prompt (no auto-connect; returns error if not connected)
+- `POST /api/sessions/:id/cancel` — cancel in-progress prompt
+- `GET /api/sessions/:id/events` — SSE event stream (always succeeds, uses session-level broadcaster)
+- `POST/DELETE /api/sessions/:id/connect` — connect/disconnect agent
 
-### Frontend (`src/app/components/`)
+### Frontend (`apps/web/`)
 
-- `session-layout.tsx` — orchestrator: sidebar + chat view, auto-creates first session
-- `sidebar.tsx` — session list with create/rename/delete, connection status indicators
-- `chat-view.tsx` — chat-style message display, SSE streaming, prompt input
+Pure UI — no backend dependencies (no Effect, no SQLite, no ACP SDK).
+
+- `src/lib/api.ts` — Backend API client (all fetch calls to `http://localhost:3456`)
+- `src/app/components/session-layout.tsx` — Orchestrator: sidebar + chat views + setup mode
+- `src/app/components/sidebar.tsx` — Session list with Active/History sections, status dots
+- `src/app/components/chat-view.tsx` — Chat display, always-on SSE, prompt input
+- `src/app/components/providers.ts` — Provider info for UI display
 
 ## Key Patterns
 
 - Effect services use `Context.Tag` class pattern with static `layer` properties
-- Errors use `Schema.TaggedError` (e.g., `SessionNotFoundError`, `AcpConnectionError`) for type-safe domain errors
+- Errors use `Schema.TaggedError` (e.g., `SessionNotFoundError`, `AcpConnectionError`)
 - Service methods use `Effect.fn` for call-site tracing
-- API routes bridge Effect into Next.js via `AppRuntime.runPromise` / `AppRuntime.runPromiseExit`
-- ACP agent spawned as child process (`claude-code-acp`), communicates via `ndJsonStream` over stdio
-- `ClientSideConnection` from ACP SDK manages JSON-RPC 2.0 protocol
-- Session updates streamed to frontend as SSE events (`text/event-stream`)
-- `serverExternalPackages` includes `better-sqlite3`, `@agentclientprotocol/sdk`, `@zed-industries/claude-code-acp`
+- Hono routes bridge Effect via `AppRuntime.runPromise` / `AppRuntime.runPromiseExit`
+- Session-level broadcasters (`Map<sessionId, EventBroadcaster>`) survive agent disconnects
+- `subscribe()` always succeeds (no `AcpConnectionError`), uses session-level broadcaster
+- `connect()` broadcasts `"connected"` event; `disconnect()`/crash broadcasts `"disconnected"`
+- Frontend EventSource is always-on (no `if (!connected) return` guard)
+- Setup mode lives in `SessionLayout`, not `ChatView` — no DB session until user clicks Start
+- Sidebar splits sessions into Active (connected, with status dots) and History (disconnected, muted)
 
 <!-- effect-solutions:start -->
 ## Effect Best Practices

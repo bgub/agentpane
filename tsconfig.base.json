@@ -1,0 +1,21 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["esnext"],
+    "strict": true,
+    "exactOptionalPropertyTypes": true,
+    "noUnusedLocals": true,
+    "noImplicitOverride": true,
+    "esModuleInterop": true,
+    "module": "preserve",
+    "moduleResolution": "bundler",
+    "moduleDetection": "force",
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "verbatimModuleSyntax": true,
+    "incremental": true,
+    "sourceMap": true,
+    "skipLibCheck": true
+  },
+  "exclude": ["node_modules", ".reference"]
+}
