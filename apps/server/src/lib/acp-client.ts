@@ -363,7 +363,8 @@ export class AcpClient extends Context.Tag("@agentpane/AcpClient")<
           // Ensure broadcaster exists before connecting
           ensureBroadcaster(sessionId)
 
-          const effectiveCwd = cwd === "~" ? process.env.HOME || "/" : cwd
+          const home = process.env.HOME || "/"
+          const effectiveCwd = cwd === "~" ? home : cwd.startsWith("~/") ? home + cwd.slice(1) : cwd
           const providerName = PROVIDERS[agentType]?.name ?? agentType
           const binPath = yield* Effect.try({
             try: () => resolveProviderBin(agentType),
