@@ -5,15 +5,15 @@ import { sessionsRoutes } from "./routes/sessions.js"
 
 const app = new Hono()
 
-// Private Network Access preflight support (public website → localhost)
+// Private Network Access: must wrap CORS so the header lands on the preflight response
 app.use("*", async (c, next) => {
+  await next()
   if (c.req.header("Access-Control-Request-Private-Network") === "true") {
     c.header("Access-Control-Allow-Private-Network", "true")
   }
-  await next()
 })
 
-app.use("*", cors({ origin: "*", credentials: true }))
+app.use("*", cors({ origin: "*" }))
 
 app.get("/api/health", (c) => c.json({ app: "agentpane", status: "ok" }))
 
