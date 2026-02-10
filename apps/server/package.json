@@ -1,13 +1,34 @@
 {
-  "name": "@agentpane/server",
+  "name": "agentpane",
   "version": "0.1.0",
-  "private": true,
+  "description": "Local server for AgentPane — web interface for AI coding agents",
   "type": "module",
+  "bin": {
+    "agentpane": "bin/agentpane.js"
+  },
+  "files": [
+    "bin",
+    "dist"
+  ],
   "scripts": {
     "dev": "tsx watch src/index.ts",
     "build": "tsc",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "prepublishOnly": "tsc"
   },
+  "keywords": [
+    "acp",
+    "agent",
+    "claude",
+    "coding-agent",
+    "agentpane"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/bgub/agentpane.git",
+    "directory": "apps/server"
+  },
+  "license": "MIT",
   "dependencies": {
     "@agentclientprotocol/sdk": "^0.14.1",
     "@effect/sql": "^0.49.0",
