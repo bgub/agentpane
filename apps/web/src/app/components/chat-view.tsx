@@ -1,7 +1,7 @@
 "use client"
 
-import { useState, useRef, useEffect, useCallback, type KeyboardEvent } from "react"
-import { Square, Check, X, Loader2, Terminal, FileText, Search, Brain, Pencil, Plug, Unplug } from "lucide-react"
+import { useState, useRef, useEffect, useCallback } from "react"
+import { Check, X, Loader2, Terminal, FileText, Search, Brain, Pencil } from "lucide-react"
 import { Streamdown } from "streamdown"
 import { code } from "@streamdown/code"
 import { api } from "@/lib/api"
@@ -25,9 +25,9 @@ interface BlockData {
 
 interface ChatViewProps {
   sessionId: string
-  cwd: string
-  agentType: string
   connected: boolean
+  lastSentPrompt: { text: string; ts: number } | null
+  promptError: { message: string; ts: number } | null
   onPromptingChange?: (sessionId: string, prompting: boolean) => void
   onConnectionChange?: (sessionId: string, connected: boolean, config?: { cwd: string; agent_type: string }) => void
 }
@@ -72,11 +72,190 @@ function formatOutput(raw: unknown): string {
   return JSON.stringify(raw, null, 2)
 }
 
+// --- Diff computation for edit tool calls ---
+
+interface DiffLine {
+  type: "add" | "remove" | "same"
+  content: string
+}
+
+function computeLineDiff(oldText: string, newText: string): DiffLine[] {
+  const oldLines = oldText.split("\n")
+  const newLines = newText.split("\n")
+  const m = oldLines.length
+  const n = newLines.length
+
+  // LCS dynamic programming
+  const dp: number[][] = Array.from({ length: m + 1 }, () => new Array<number>(n + 1).fill(0))
+  for (let i = 1; i <= m; i++) {
+    for (let j = 1; j <= n; j++) {
+      dp[i][j] =
+        oldLines[i - 1] === newLines[j - 1]
+          ? dp[i - 1][j - 1] + 1
+          : Math.max(dp[i - 1][j], dp[i][j - 1])
+    }
+  }
+
+  // Backtrack to build diff
+  const stack: DiffLine[] = []
+  let i = m
+  let j = n
+  while (i > 0 || j > 0) {
+    if (i > 0 && j > 0 && oldLines[i - 1] === newLines[j - 1]) {
+      stack.push({ type: "same", content: oldLines[i - 1] })
+      i--
+      j--
+    } else if (j > 0 && (i === 0 || dp[i][j - 1] >= dp[i - 1][j])) {
+      stack.push({ type: "add", content: newLines[j - 1] })
+      j--
+    } else {
+      stack.push({ type: "remove", content: oldLines[i - 1] })
+      i--
+    }
+  }
+
+  return stack.reverse()
+}
+
+interface FileChange {
+  path: string
+  type: string
+  content: string
+  oldContent?: string | undefined
+}
+
+function parseEditChanges(raw: unknown): FileChange[] | null {
+  const input = typeof raw === "string" ? (() => { try { return JSON.parse(raw) } catch { return null } })() : raw
+  if (!input || typeof input !== "object") return null
+  const obj = input as Record<string, unknown>
+
+  // ACP changes-based format: { changes: { "/path/to/file": { content, type, old_content? } } }
+  if (obj.changes && typeof obj.changes === "object") {
+    const result: FileChange[] = []
+    for (const [path, value] of Object.entries(obj.changes as Record<string, unknown>)) {
+      if (value && typeof value === "object") {
+        const change = value as Record<string, unknown>
+        result.push({
+          path,
+          content: typeof change.content === "string" ? change.content : "",
+          type: typeof change.type === "string" ? change.type : "unknown",
+          oldContent: typeof change.old_content === "string" ? change.old_content : undefined,
+        })
+      }
+    }
+    return result.length > 0 ? result : null
+  }
+
+  // Claude Code old_string/new_string format
+  if (typeof obj.old_string === "string" || typeof obj.new_string === "string") {
+    return [{
+      path: typeof obj.file_path === "string" ? obj.file_path : "",
+      type: obj.old_string ? "edit" : "add",
+      content: typeof obj.new_string === "string" ? obj.new_string : "",
+      oldContent: typeof obj.old_string === "string" ? obj.old_string : undefined,
+    }]
+  }
+
+  return null
+}
+
+function EditDiffView({ rawInput }: { rawInput: unknown }) {
+  const changes = parseEditChanges(rawInput)
+  if (!changes) return null
+
+  return (
+    <div className="space-y-2">
+      {changes.map((change, i) => {
+        const lines: DiffLine[] = change.oldContent
+          ? computeLineDiff(change.oldContent, change.content)
+          : change.content.split("\n").map((l): DiffLine => ({ type: "add", content: l }))
+
+        return (
+          <div key={i}>
+            {changes.length > 1 && (
+              <div className="text-[10px] text-[var(--t-dim)] mb-1 truncate">{change.path}</div>
+            )}
+            <div className="text-xs font-mono leading-[1.6] overflow-x-auto max-h-60 overflow-y-auto">
+              {lines.map((line, j) => (
+                <div
+                  key={j}
+                  className={
+                    line.type === "add"
+                      ? "bg-[var(--t-green)]/10 text-[var(--t-green)]"
+                      : line.type === "remove"
+                        ? "bg-[var(--t-red)]/10 text-[var(--t-red)]"
+                        : "text-[var(--t-dim)]"
+                  }
+                >
+                  <span className="select-none inline-block w-4 text-center opacity-60">
+                    {line.type === "add" ? "+" : line.type === "remove" ? "\u2212" : " "}
+                  </span>
+                  {line.content || " "}
+                </div>
+              ))}
+            </div>
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
+// Extract readable text from various agent output formats
+function extractOutputText(raw: unknown): string | null {
+  // ACP array format: [{type: "text", text: "..."}]
+  if (Array.isArray(raw)) {
+    const texts = raw
+      .filter(
+        (item): item is { type: string; text: string } =>
+          item && typeof item === "object" && item.type === "text" && typeof item.text === "string"
+      )
+      .map((item) => item.text)
+    if (texts.length > 0) return texts.join("\n")
+  }
+  // Object with stdout/stderr (Codex and similar)
+  if (raw && typeof raw === "object" && !Array.isArray(raw)) {
+    const obj = raw as Record<string, unknown>
+    const parts: string[] = []
+    if (typeof obj.stdout === "string" && obj.stdout) parts.push(obj.stdout)
+    if (typeof obj.stderr === "string" && obj.stderr) parts.push(obj.stderr)
+    if (parts.length > 0) return parts.join("\n")
+  }
+  return null
+}
+
+// Extract command string from various input formats
+function extractCommand(raw: unknown): string | null {
+  if (!raw || typeof raw !== "object") return null
+  const obj = raw as Record<string, unknown>
+  // Claude Code: { command: "ls -la ..." }
+  if (typeof obj.command === "string") return obj.command
+  // Codex: { command: ["zsh", "-lc", "ls"], parsed_cmd: [{cmd: "ls"}] }
+  if (Array.isArray(obj.command)) {
+    const args = obj.command as string[]
+    // Find the actual command after shell -c/-lc flag
+    const flagIdx = args.findIndex((a) => a === "-c" || a === "-lc")
+    if (flagIdx >= 0 && args[flagIdx + 1]) return args[flagIdx + 1]
+    return args[args.length - 1] ?? null
+  }
+  return null
+}
+
 function ToolCallBox({ state }: { state: ToolCallState }) {
-  const [expanded, setExpanded] = useState(false)
-  const output = formatOutput(state.rawOutput)
-  const input = formatOutput(state.rawInput)
-  const hasDetails = !!(output || input)
+  const isEdit = state.kind === "edit" && !!parseEditChanges(state.rawInput)
+  const [expanded, setExpanded] = useState(isEdit)
+
+  const outputText = extractOutputText(state.rawOutput)
+  const command = extractCommand(state.rawInput)
+  const isExecute = !isEdit && (state.kind === "execute" || !!command)
+  const rawOutput = formatOutput(state.rawOutput)
+  const rawInput = formatOutput(state.rawInput)
+  const hasDetails =
+    isEdit ||
+    isExecute ||
+    !!outputText ||
+    (!!rawInput && rawInput !== "{}") ||
+    (!!rawOutput && rawOutput !== "{}" && rawOutput !== "null" && rawOutput !== "")
 
   return (
     <div className="my-1.5 rounded-md bg-[var(--t-surface)] border border-[var(--t-border)]">
@@ -96,19 +275,72 @@ function ToolCallBox({ state }: { state: ToolCallState }) {
       </button>
       {expanded && hasDetails && (
         <div className="border-t border-[var(--t-border)] px-3 py-2 space-y-2">
-          {input && (
-            <pre className="text-xs leading-relaxed font-mono overflow-x-auto whitespace-pre-wrap text-[var(--t-muted)] max-h-40 overflow-y-auto">
-              {input}
+          {isEdit ? (
+            <EditDiffView rawInput={state.rawInput} />
+          ) : isExecute ? (
+            <ExecuteDetails command={command} outputText={outputText} />
+          ) : state.kind === "read" ? (
+            <pre className="text-xs leading-relaxed font-mono whitespace-pre overflow-x-auto text-[var(--t-text)] max-h-60 overflow-y-auto">
+              {outputText || rawOutput}
             </pre>
-          )}
-          {output && (
-            <pre className="text-xs leading-relaxed font-mono overflow-x-auto whitespace-pre-wrap text-[var(--t-text)] max-h-60 overflow-y-auto">
-              {output}
-            </pre>
+          ) : (
+            <GenericDetails rawInput={rawInput} outputText={outputText} rawOutput={rawOutput} />
           )}
         </div>
       )}
     </div>
+  )
+}
+
+function ExecuteDetails({
+  command,
+  outputText,
+}: {
+  command: string | null
+  outputText: string | null
+}) {
+  return (
+    <div className="space-y-1.5">
+      {command && (
+        <div className="text-xs font-mono text-[var(--t-accent)]">
+          <span className="text-[var(--t-dim)] select-none">$ </span>
+          {command}
+        </div>
+      )}
+      {outputText && (
+        <pre className="text-xs leading-relaxed font-mono whitespace-pre overflow-x-auto text-[var(--t-muted)] max-h-60 overflow-y-auto">
+          {outputText}
+        </pre>
+      )}
+    </div>
+  )
+}
+
+function GenericDetails({
+  rawInput,
+  outputText,
+  rawOutput,
+}: {
+  rawInput: string
+  outputText: string | null
+  rawOutput: string
+}) {
+  const showInput = rawInput && rawInput !== "{}"
+  const output = outputText || rawOutput
+
+  return (
+    <>
+      {showInput && (
+        <pre className="text-xs leading-relaxed font-mono overflow-x-auto whitespace-pre-wrap text-[var(--t-muted)] max-h-40 overflow-y-auto">
+          {rawInput}
+        </pre>
+      )}
+      {output && (
+        <pre className="text-xs leading-relaxed font-mono overflow-x-auto whitespace-pre-wrap text-[var(--t-text)] max-h-60 overflow-y-auto">
+          {output}
+        </pre>
+      )}
+    </>
   )
 }
 
@@ -232,21 +464,20 @@ function applyEventToBlocks(
 
 export default function ChatView({
   sessionId,
-  cwd,
-  agentType,
   connected,
+  lastSentPrompt,
+  promptError,
   onPromptingChange,
   onConnectionChange,
 }: ChatViewProps) {
   const [turns, setTurns] = useState<TurnData[]>([])
   const [streamingBlocks, setStreamingBlocks] = useState<StreamingBlock[]>([])
-  const [input, setInput] = useState("")
   const [prompting, setPrompting] = useState(false)
-  const [connecting, setConnecting] = useState(false)
 
   const scrollRef = useRef<HTMLDivElement>(null)
-  const textareaRef = useRef<HTMLTextAreaElement>(null)
   const blocksRef = useRef<StreamingBlock[]>([])
+  const lastPromptTsRef = useRef(0)
+  const lastErrorTsRef = useRef(0)
 
   const hasStreamingContent = streamingBlocks.length > 0
 
@@ -256,33 +487,48 @@ export default function ChatView({
     if (el) el.scrollTop = el.scrollHeight
   }, [turns, streamingBlocks])
 
-  // Focus textarea
-  useEffect(() => {
-    if (!prompting && !connecting && agentType) textareaRef.current?.focus()
-  }, [prompting, connecting, agentType])
-
-  useEffect(() => {
-    if (!agentType) return
-
-    const handleGlobalKeyDown = (e: globalThis.KeyboardEvent) => {
-      if (
-        e.target instanceof HTMLInputElement ||
-        e.target instanceof HTMLTextAreaElement ||
-        e.metaKey || e.ctrlKey || e.altKey
-      ) return
-      if (e.key.length === 1) {
-        textareaRef.current?.focus()
-      }
-    }
-
-    window.addEventListener("keydown", handleGlobalKeyDown)
-    return () => window.removeEventListener("keydown", handleGlobalKeyDown)
-  }, [agentType])
-
   // Notify parent of prompting state
   useEffect(() => {
     onPromptingChange?.(sessionId, prompting)
   }, [prompting, sessionId, onPromptingChange])
+
+  // Handle optimistic user turn from parent
+  useEffect(() => {
+    if (lastSentPrompt && lastSentPrompt.ts !== lastPromptTsRef.current) {
+      lastPromptTsRef.current = lastSentPrompt.ts
+      const userTurn: TurnData = {
+        id: `temp-user-${lastSentPrompt.ts}`,
+        session_id: sessionId,
+        role: "user",
+        stop_reason: "end_turn",
+        created_at: lastSentPrompt.ts,
+        blocks: [{
+          id: `temp-block-${lastSentPrompt.ts}`,
+          turn_id: `temp-user-${lastSentPrompt.ts}`,
+          kind: "text",
+          content: lastSentPrompt.text,
+          created_at: lastSentPrompt.ts,
+        }],
+      }
+      setTurns((prev) => [...prev, userTurn])
+    }
+  }, [lastSentPrompt, sessionId])
+
+  // Handle errors from parent
+  useEffect(() => {
+    if (promptError && promptError.ts !== lastErrorTsRef.current) {
+      lastErrorTsRef.current = promptError.ts
+      const blocks = blocksRef.current
+      const last = blocks[blocks.length - 1]
+      if (last && last.type === "text") {
+        last.content += `\n\n${promptError.message}`
+      } else {
+        blocks.push({ type: "text", content: promptError.message })
+      }
+      blocksRef.current = blocks
+      setStreamingBlocks([...blocks])
+    }
+  }, [promptError])
 
   // Load conversation on mount
   useEffect(() => {
@@ -363,271 +609,83 @@ export default function ChatView({
     }
   }, [sessionId, refreshConversation, onConnectionChange])
 
-  const connectAgent = useCallback(async () => {
-    if (connecting) return
-    setConnecting(true)
-    try {
-      const res = await api.sessions.connect(sessionId, { agent_type: agentType, cwd })
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({ error: "Connection failed" }))
-        setStreamingBlocks([{ type: "text", content: `Error: ${err.error}` }])
-      }
-      // SSE "connected" event will update the connected state via onConnectionChange
-    } catch {
-      setStreamingBlocks([{ type: "text", content: "Error: Failed to connect agent" }])
-    } finally {
-      setConnecting(false)
-    }
-  }, [sessionId, agentType, cwd, connecting])
-
-  const disconnectAgent = useCallback(async () => {
-    try {
-      await api.sessions.disconnect(sessionId)
-      // SSE "disconnected" event will update the connected state via onConnectionChange
-    } catch {
-      // ignore
-    }
-  }, [sessionId])
-
-  const cancelPrompt = useCallback(() => {
-    api.sessions.cancel(sessionId).catch(() => {})
-  }, [sessionId])
-
-  const sendPrompt = useCallback(
-    async (text: string) => {
-      const trimmed = text.trim()
-      if (!trimmed || prompting) return
-
-      // Auto-reconnect if disconnected
-      if (!connected) {
-        setConnecting(true)
-        try {
-          const res = await api.sessions.connect(sessionId, { agent_type: agentType, cwd })
-          if (!res.ok) {
-            const err = await res.json().catch(() => ({ error: "Connection failed" }))
-            setStreamingBlocks([{ type: "text", content: `Error: ${err.error}` }])
-            setConnecting(false)
-            return
-          }
-        } catch {
-          setStreamingBlocks([{ type: "text", content: "Error: Failed to reconnect agent" }])
-          setConnecting(false)
-          return
-        }
-        setConnecting(false)
-      }
-
-      setInput("")
-
-      // Add user turn optimistically
-      const userTurn: TurnData = {
-        id: `temp-user-${Date.now()}`,
-        session_id: sessionId,
-        role: "user",
-        stop_reason: "end_turn",
-        created_at: Date.now(),
-        blocks: [
-          {
-            id: `temp-block-${Date.now()}`,
-            turn_id: `temp-user-${Date.now()}`,
-            kind: "text",
-            content: trimmed,
-            created_at: Date.now(),
-          },
-        ],
-      }
-      setTurns((prev) => [...prev, userTurn])
-
-      try {
-        const res = await api.sessions.prompt(sessionId, trimmed)
-
-        if (!res.ok) {
-          const err = await res.json().catch(() => ({ error: "Unknown error" }))
-          setStreamingBlocks([{ type: "text", content: `Error: ${err.error}` }])
-        }
-      } catch {
-        setStreamingBlocks([{ type: "text", content: "Error: Network error" }])
-      }
-    },
-    [prompting, connected, sessionId, agentType, cwd]
-  )
-
-  const handleKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
-    if (e.key === "Enter" && !e.shiftKey) {
-      e.preventDefault()
-      sendPrompt(input)
-    }
-    if (e.key === "Escape" && prompting) {
-      cancelPrompt()
-    }
-  }
-
-  const handleInputChange = (value: string) => {
-    setInput(value)
-    if (textareaRef.current) {
-      textareaRef.current.style.height = "auto"
-      textareaRef.current.style.height = `${Math.min(textareaRef.current.scrollHeight, 200)}px`
-    }
-  }
-
   return (
-    <div className="flex h-full min-h-0 flex-col bg-[var(--t-bg)]">
-      {/* Top status bar */}
-      <div className="flex h-10 shrink-0 items-center justify-between px-4 bg-[var(--t-surface)] border-b border-[var(--t-border)]">
-        <span className="text-xs font-semibold text-[var(--t-accent)] truncate min-w-0">{cwd.replace(/^\/home\/[^/]+/, '~')}</span>
-        <div className="flex items-center gap-3 text-xs">
-          {prompting && (
-            <span className="flex items-center gap-1.5 text-[var(--t-amber)]">
-              <span className="size-1.5 rounded-full bg-[var(--t-amber)] animate-pulse" />
-              thinking
-            </span>
-          )}
-          <button
-            onClick={connected ? disconnectAgent : connectAgent}
-            disabled={connecting || prompting}
-            className={`flex items-center gap-1.5 px-2 py-1 rounded-md text-xs transition-colors cursor-pointer disabled:cursor-default ${
-              connecting
-                ? "text-[var(--t-amber)] bg-[var(--t-amber)]/10"
-                : connected
-                  ? "text-[var(--t-green)] hover:bg-[var(--t-red)]/10 hover:text-[var(--t-red)]"
-                  : "text-[var(--t-dim)] hover:bg-[var(--t-green)]/10 hover:text-[var(--t-green)]"
-            }`}
-            title={connecting ? "Connecting..." : connected ? "Disconnect agent" : "Connect agent"}
-          >
-            {connecting ? (
-              <Loader2 className="size-3 animate-spin" />
-            ) : connected ? (
-              <Plug className="size-3" />
-            ) : (
-              <Unplug className="size-3" />
-            )}
-            {connecting ? "connecting" : connected ? "connected" : "disconnected"}
-          </button>
-        </div>
-      </div>
-
-      {/* Message stream */}
-      <div ref={scrollRef} className="flex-1 min-h-0 overflow-y-auto">
-        <div className="max-w-3xl mx-auto px-5 py-6 space-y-1">
-          {turns.map((turn) => (
-            <div key={turn.id}>
-              {turn.role === "user" ? (
-                <div className="mt-5 mb-3 -mx-3 px-3 py-2.5 rounded-lg bg-[var(--t-elevated)]">
-                  <div className="flex items-start gap-2.5">
-                    <span className="shrink-0 text-sm font-mono text-[var(--t-accent)] select-none leading-relaxed">&#10095;</span>
-                    <div className="text-sm leading-relaxed whitespace-pre-wrap text-[var(--t-white)]">
-                      {turn.blocks
-                        .filter((b) => b.kind === "text")
-                        .map((b) => b.content)
-                        .join("\n")}
-                    </div>
+    <div ref={scrollRef} className="h-full overflow-y-auto">
+      <div className="max-w-3xl mx-auto px-5 py-6 space-y-1">
+        {turns.map((turn) => (
+          <div key={turn.id}>
+            {turn.role === "user" ? (
+              <div className="mt-5 mb-3 -mx-3 px-3 py-2.5 rounded-lg bg-[var(--t-elevated)]">
+                <div className="flex items-start gap-2.5">
+                  <span className="shrink-0 text-sm font-mono text-[var(--t-accent)] select-none leading-relaxed">&#10095;</span>
+                  <div className="text-sm leading-relaxed whitespace-pre-wrap text-[var(--t-white)]">
+                    {turn.blocks
+                      .filter((b) => b.kind === "text")
+                      .map((b) => b.content)
+                      .join("\n")}
                   </div>
+                </div>
+              </div>
+            ) : (
+              <div className="py-1">
+                {mergeToolCallUpdates(turn.blocks)
+                  .filter((b) => b.kind === "text" || b.kind === "tool_call")
+                  .map((b) =>
+                    b.kind === "text" ? (
+                      <div
+                        key={b.id}
+                        className="text-sm leading-[1.7] text-[var(--t-text)] pl-5 border-l-2 border-[var(--t-border)]"
+                      >
+                        <Streamdown plugins={markdownPlugins} mode="static">
+                          {b.content}
+                        </Streamdown>
+                      </div>
+                    ) : (
+                      <div key={b.id} className="pl-5 border-l-2 border-[var(--t-border)]">
+                        <ToolCallBox state={parseToolCallBlock(b)} />
+                      </div>
+                    )
+                  )}
+                {turn.stop_reason && turn.stop_reason !== "end_turn" && (
+                  <div className="pl-5 mt-1 text-[11px] font-mono text-[var(--t-dim)]">
+                    [{turn.stop_reason}]
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        ))}
+
+        {/* Streaming assistant output */}
+        {hasStreamingContent && (
+          <div className="py-1">
+            {streamingBlocks.map((block, i) =>
+              block.type === "text" ? (
+                <div
+                  key={`stream-${i}`}
+                  className="text-sm leading-[1.7] text-[var(--t-text)] pl-5 border-l-2 border-[var(--t-accent)]"
+                >
+                  <Streamdown plugins={markdownPlugins} isAnimating={i === streamingBlocks.length - 1}>
+                    {block.content}
+                  </Streamdown>
                 </div>
               ) : (
-                <div className="py-1">
-                  {mergeToolCallUpdates(turn.blocks)
-                    .filter((b) => b.kind === "text" || b.kind === "tool_call")
-                    .map((b) =>
-                      b.kind === "text" ? (
-                        <div
-                          key={b.id}
-                          className="text-sm leading-[1.7] text-[var(--t-text)] pl-5 border-l-2 border-[var(--t-border)]"
-                        >
-                          <Streamdown plugins={markdownPlugins} mode="static">
-                            {b.content}
-                          </Streamdown>
-                        </div>
-                      ) : (
-                        <div key={b.id} className="pl-5 border-l-2 border-[var(--t-border)]">
-                          <ToolCallBox state={parseToolCallBlock(b)} />
-                        </div>
-                      )
-                    )}
-                  {turn.stop_reason && turn.stop_reason !== "end_turn" && (
-                    <div className="pl-5 mt-1 text-[11px] font-mono text-[var(--t-dim)]">
-                      [{turn.stop_reason}]
-                    </div>
-                  )}
+                <div key={`stream-${i}`} className="pl-5 border-l-2 border-[var(--t-accent)]">
+                  <ToolCallBox state={block.state} />
                 </div>
-              )}
-            </div>
-          ))}
+              )
+            )}
+          </div>
+        )}
 
-          {/* Streaming assistant output */}
-          {hasStreamingContent && (
-            <div className="py-1">
-              {streamingBlocks.map((block, i) =>
-                block.type === "text" ? (
-                  <div
-                    key={`stream-${i}`}
-                    className="text-sm leading-[1.7] text-[var(--t-text)] pl-5 border-l-2 border-[var(--t-accent)]"
-                  >
-                    <Streamdown plugins={markdownPlugins} isAnimating={i === streamingBlocks.length - 1}>
-                      {block.content}
-                    </Streamdown>
-                  </div>
-                ) : (
-                  <div key={`stream-${i}`} className="pl-5 border-l-2 border-[var(--t-accent)]">
-                    <ToolCallBox state={block.state} />
-                  </div>
-                )
-              )}
+        {/* Waiting for response */}
+        {prompting && !hasStreamingContent && (
+          <div className="py-1">
+            <div className="text-sm text-[var(--t-muted)] pl-5 border-l-2 border-[var(--t-accent)]">
+              <span className="animate-pulse">...</span>
             </div>
-          )}
-
-          {/* Waiting for response */}
-          {prompting && !hasStreamingContent && (
-            <div className="py-1">
-              <div className="text-sm text-[var(--t-muted)] pl-5 border-l-2 border-[var(--t-accent)]">
-                <span className="animate-pulse">...</span>
-              </div>
-            </div>
-          )}
-        </div>
-      </div>
-
-      {/* Input area */}
-      <div className="shrink-0 h-12 border-t border-[var(--t-border)] bg-[var(--t-surface)] px-5 flex items-center">
-        <div className="max-w-3xl mx-auto w-full flex items-center gap-2.5">
-          <span className={`shrink-0 text-sm font-mono select-none ${
-            prompting || connecting ? "text-[var(--t-dim)]" : "text-[var(--t-accent)]"
-          }`}>
-            &#10095;
-          </span>
-          <textarea
-            ref={textareaRef}
-            value={input}
-            onChange={(e) => handleInputChange(e.target.value)}
-            onKeyDown={handleKeyDown}
-            disabled={prompting || connecting}
-            rows={1}
-            className="flex-1 resize-none bg-transparent text-sm text-[var(--t-bright)] outline-none placeholder:text-[var(--t-dim)] disabled:opacity-40"
-            style={{ caretColor: 'var(--t-accent)' }}
-            placeholder={
-              connecting
-                ? "Connecting agent..."
-                : prompting
-                  ? "Agent is thinking..."
-                  : !connected
-                    ? "Send a message to reconnect..."
-                    : "Send a message..."
-            }
-            spellCheck={false}
-          />
-          {prompting ? (
-            <button
-              onClick={cancelPrompt}
-              className="shrink-0 rounded-md bg-[var(--t-red)]/15 p-2 text-[var(--t-red)] hover:bg-[var(--t-red)]/25 transition-colors cursor-pointer"
-              title="Stop (Esc)"
-            >
-              <Square className="size-3.5" />
-            </button>
-          ) : (
-            <span className="shrink-0 text-xs text-[var(--t-muted)] select-none">
-              enter &#8629;
-            </span>
-          )}
-        </div>
+          </div>
+        )}
       </div>
     </div>
   )

@@ -1,46 +1,144 @@
 "use client"
 
+import { useState, useCallback } from "react"
 import { useSession } from "./session-provider"
 import { BackendOfflineScreen } from "./backend-offline-screen"
 import { SessionSetupScreen } from "./session-setup-screen"
+import { ChatHeader } from "./chat-header"
+import { ChatFooter } from "./chat-footer"
 import ChatView from "./chat-view"
+import { api } from "@/lib/api"
 
 export function MainPanel() {
   const {
     sessions,
     activeSessionId,
     connectedSessionIds,
+    promptingSessionIds,
     backendStatus,
     showSetup,
     onPromptingChange,
     onConnectionChange,
   } = useSession()
 
+  const [connecting, setConnecting] = useState(false)
+  const [lastSentPrompt, setLastSentPrompt] = useState<{ text: string; ts: number } | null>(null)
+  const [promptError, setPromptError] = useState<{ message: string; ts: number } | null>(null)
+
   const activeSession = sessions.find((s) => s.id === activeSessionId)
+  const connected = activeSession ? connectedSessionIds.has(activeSession.id) : false
+  const prompting = activeSession ? promptingSessionIds.has(activeSession.id) : false
+  const hasChat = !!activeSession && !showSetup && backendStatus !== "offline"
+
+  const connectAgent = useCallback(async () => {
+    if (!activeSession || connecting) return
+    setConnecting(true)
+    try {
+      const res = await api.sessions.connect(activeSession.id, {
+        agent_type: activeSession.agent_type,
+        cwd: activeSession.cwd,
+      })
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ error: "Connection failed" }))
+        setPromptError({ message: `Error: ${err.error}`, ts: Date.now() })
+      }
+    } catch {
+      setPromptError({ message: "Error: Failed to connect agent", ts: Date.now() })
+    } finally {
+      setConnecting(false)
+    }
+  }, [activeSession, connecting])
+
+  const disconnectAgent = useCallback(async () => {
+    if (!activeSession) return
+    await api.sessions.disconnect(activeSession.id).catch(() => {})
+  }, [activeSession])
+
+  const cancelPrompt = useCallback(() => {
+    if (!activeSession) return
+    api.sessions.cancel(activeSession.id).catch(() => {})
+  }, [activeSession])
+
+  const sendPrompt = useCallback(async (text: string) => {
+    if (!activeSession || prompting) return
+
+    setLastSentPrompt({ text, ts: Date.now() })
+
+    // Auto-reconnect if disconnected
+    if (!connected) {
+      setConnecting(true)
+      try {
+        const res = await api.sessions.connect(activeSession.id, {
+          agent_type: activeSession.agent_type,
+          cwd: activeSession.cwd,
+        })
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({ error: "Connection failed" }))
+          setPromptError({ message: `Error: ${err.error}`, ts: Date.now() })
+          setConnecting(false)
+          return
+        }
+      } catch {
+        setPromptError({ message: "Error: Failed to reconnect agent", ts: Date.now() })
+        setConnecting(false)
+        return
+      }
+      setConnecting(false)
+    }
+
+    try {
+      const res = await api.sessions.prompt(activeSession.id, text)
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ error: "Unknown error" }))
+        setPromptError({ message: `Error: ${err.error}`, ts: Date.now() })
+      }
+    } catch {
+      setPromptError({ message: "Error: Network error", ts: Date.now() })
+    }
+  }, [activeSession, prompting, connected])
 
   return (
-    <div className="flex-1 min-w-0 min-h-0 relative">
-      {backendStatus === "offline" ? (
-        <BackendOfflineScreen />
-      ) : showSetup ? (
-        <SessionSetupScreen />
-      ) : activeSession ? (
-        <ChatView
-          key={activeSession.id}
-          sessionId={activeSession.id}
-          cwd={activeSession.cwd}
-          agentType={activeSession.agent_type}
-          connected={connectedSessionIds.has(activeSession.id)}
-          onPromptingChange={onPromptingChange}
-          onConnectionChange={onConnectionChange}
-        />
-      ) : backendStatus === "checking" ? (
-        <div className="h-full bg-[var(--t-bg)]" />
-      ) : (
-        <div className="flex h-full items-center justify-center text-[var(--t-muted)] text-sm bg-[var(--t-bg)]">
-          No sessions. Click + to create one.
-        </div>
-      )}
+    <div className="flex-1 min-w-0 min-h-0 flex flex-col bg-[var(--t-bg)]">
+      <ChatHeader
+        cwd={hasChat ? activeSession?.cwd : undefined}
+        connected={connected}
+        prompting={prompting}
+        connecting={connecting}
+        onConnect={connectAgent}
+        onDisconnect={disconnectAgent}
+      />
+
+      <div className="flex-1 min-h-0 relative">
+        {backendStatus === "offline" ? (
+          <BackendOfflineScreen />
+        ) : showSetup ? (
+          <SessionSetupScreen />
+        ) : activeSession ? (
+          <ChatView
+            key={activeSession.id}
+            sessionId={activeSession.id}
+            connected={connected}
+            lastSentPrompt={lastSentPrompt}
+            promptError={promptError}
+            onPromptingChange={onPromptingChange}
+            onConnectionChange={onConnectionChange}
+          />
+        ) : backendStatus === "checking" ? null : (
+          <div className="flex h-full items-center justify-center text-[var(--t-muted)] text-sm">
+            No sessions. Click + to create one.
+          </div>
+        )}
+      </div>
+
+      <ChatFooter
+        sessionId={activeSession?.id ?? null}
+        active={hasChat}
+        prompting={prompting}
+        connecting={connecting}
+        connected={connected}
+        onSend={sendPrompt}
+        onCancel={cancelPrompt}
+      />
     </div>
   )
 }
