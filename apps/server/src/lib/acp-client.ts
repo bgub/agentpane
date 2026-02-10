@@ -51,7 +51,7 @@ interface SubscribeResult {
   latestEventId: number
 }
 
-export class AcpClient extends Context.Tag("@acapa/AcpClient")<
+export class AcpClient extends Context.Tag("@agentpane/AcpClient")<
   AcpClient,
   {
     readonly connect: (
@@ -414,7 +414,7 @@ export class AcpClient extends Context.Tag("@acapa/AcpClient")<
                   fs: { readTextFile: true, writeTextFile: true },
                   terminal: true,
                 },
-                clientInfo: { name: "acapa", version: "0.1.0" },
+                clientInfo: { name: "agentpane", version: "0.1.0" },
               }),
             catch: (err) => {
               proc.kill()

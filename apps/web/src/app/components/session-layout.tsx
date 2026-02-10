@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, useEffect, useCallback, useRef, type KeyboardEvent } from "react"
-import { FolderOpen } from "lucide-react"
+import { FolderOpen, Terminal, RefreshCw } from "lucide-react"
 import Sidebar from "./sidebar"
 import ChatView from "./chat-view"
 import { PROVIDERS } from "./providers"
@@ -115,23 +115,56 @@ function SessionSetupScreen({
   )
 }
 
+function BackendOfflineScreen({ onRetry, checking }: { onRetry: () => void; checking: boolean }) {
+  return (
+    <div className="flex h-screen items-center justify-center bg-[var(--t-bg)]">
+      <div className="w-full max-w-sm px-6 space-y-6 text-center">
+        <div className="mx-auto flex size-12 items-center justify-center rounded-full bg-[var(--t-surface)] border border-[var(--t-border)]">
+          <Terminal className="size-5 text-[var(--t-muted)]" />
+        </div>
+
+        <div className="space-y-2">
+          <h2 className="text-sm font-medium text-[var(--t-bright)]">Backend not running</h2>
+          <p className="text-xs text-[var(--t-muted)] leading-relaxed">
+            Start the AgentPane server to connect.
+          </p>
+        </div>
+
+        <div className="rounded-lg border border-[var(--t-border)] bg-[var(--t-surface)] px-4 py-3">
+          <code className="text-xs text-[var(--t-accent)] font-mono">pnpm dev</code>
+        </div>
+
+        <button
+          onClick={onRetry}
+          disabled={checking}
+          className="inline-flex items-center gap-2 rounded-lg border border-[var(--t-border)] bg-[var(--t-surface)] px-4 py-2 text-xs font-medium text-[var(--t-text)] transition-colors hover:bg-[var(--t-elevated)] hover:border-[var(--t-dim)] cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+        >
+          <RefreshCw className={`size-3 ${checking ? "animate-spin" : ""}`} />
+          {checking ? "Checking..." : "Retry"}
+        </button>
+      </div>
+    </div>
+  )
+}
+
 export default function SessionLayout() {
   const [sessions, setSessions] = useState<Session[]>([])
   const [activeSessionId, _setActiveSessionId] = useState<string | null>(null)
   const [initialized, setInitialized] = useState(false)
   const [showSetup, setShowSetup] = useState(false)
+  const [backendOnline, setBackendOnline] = useState<boolean | null>(null)
+  const [healthChecking, setHealthChecking] = useState(false)
 
   const setActiveSessionId = useCallback((id: string | null) => {
     _setActiveSessionId(id)
-    if (id) localStorage.setItem("acapa:activeSessionId", id)
-    else localStorage.removeItem("acapa:activeSessionId")
+    if (id) localStorage.setItem("agentpane:activeSessionId", id)
+    else localStorage.removeItem("agentpane:activeSessionId")
   }, [])
 
   const [connectedSessionIds, setConnectedSessionIds] = useState<Set<string>>(new Set())
   const [promptingSessionIds, setPromptingSessionIds] = useState<Set<string>>(new Set())
 
-  // Fetch sessions on mount
-  useEffect(() => {
+  const loadSessions = useCallback(() => {
     api.sessions.list()
       .then((res) => res.json())
       .then((data: Session[]) => {
@@ -139,7 +172,7 @@ export default function SessionLayout() {
         setConnectedSessionIds(new Set(data.filter((s) => s.connected).map((s) => s.id)))
         setPromptingSessionIds(new Set(data.filter((s) => s.prompting).map((s) => s.id)))
 
-        const saved = localStorage.getItem("acapa:activeSessionId")
+        const saved = localStorage.getItem("agentpane:activeSessionId")
         if (saved && data.some((s) => s.id === saved)) {
           _setActiveSessionId(saved)
         } else if (data.length > 0) {
@@ -151,20 +184,58 @@ export default function SessionLayout() {
       .catch(() => setInitialized(true))
   }, [])
 
-  // Poll for connection/prompting status (keeps sidebar dots accurate without per-session SSE)
+  const checkHealth = useCallback(async () => {
+    setHealthChecking(true)
+    try {
+      const res = await api.health()
+      const data = await res.json()
+      if (data?.app === "agentpane") {
+        setBackendOnline(true)
+        setHealthChecking(false)
+        return true
+      }
+    } catch {}
+    setBackendOnline(false)
+    setHealthChecking(false)
+    return false
+  }, [])
+
+  // Health check on mount, then load sessions if online
+  useEffect(() => {
+    checkHealth().then((online) => {
+      if (online) loadSessions()
+      else setInitialized(true)
+    })
+  }, [checkHealth, loadSessions])
+
+  // Poll: health check + status updates
   useEffect(() => {
     if (!initialized) return
-    const interval = setInterval(() => {
-      api.sessions.status()
-        .then((res) => res.json())
-        .then((data: { connected: string[]; prompting: string[] }) => {
-          setConnectedSessionIds(new Set(data.connected))
-          setPromptingSessionIds(new Set(data.prompting))
-        })
-        .catch(() => {})
+    const interval = setInterval(async () => {
+      try {
+        const res = await api.health()
+        const data = await res.json()
+        if (data?.app !== "agentpane") throw new Error()
+
+        if (!backendOnline) {
+          setBackendOnline(true)
+          loadSessions()
+        }
+
+        // Update status while online
+        api.sessions.status()
+          .then((res) => res.json())
+          .then((data: { connected: string[]; prompting: string[] }) => {
+            setConnectedSessionIds(new Set(data.connected))
+            setPromptingSessionIds(new Set(data.prompting))
+          })
+          .catch(() => {})
+      } catch {
+        setBackendOnline(false)
+      }
     }, 5000)
     return () => clearInterval(interval)
-  }, [initialized])
+  }, [initialized, backendOnline, loadSessions])
 
   const handleCreate = useCallback(() => {
     setShowSetup(true)
@@ -196,7 +267,7 @@ export default function SessionLayout() {
   const handleSetupCancel = useCallback(() => {
     setShowSetup(false)
     if (sessions.length > 0) {
-      const saved = localStorage.getItem("acapa:activeSessionId")
+      const saved = localStorage.getItem("agentpane:activeSessionId")
       if (saved && sessions.some((s) => s.id === saved)) {
         _setActiveSessionId(saved)
       } else {
@@ -268,6 +339,19 @@ export default function SessionLayout() {
       <div className="flex h-screen items-center justify-center bg-[var(--t-bg)] text-[var(--t-muted)] text-sm">
         Loading...
       </div>
+    )
+  }
+
+  if (backendOnline === false) {
+    return (
+      <BackendOfflineScreen
+        checking={healthChecking}
+        onRetry={() => {
+          checkHealth().then((online) => {
+            if (online) loadSessions()
+          })
+        }}
+      />
     )
   }
 

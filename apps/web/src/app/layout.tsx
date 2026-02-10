@@ -13,8 +13,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "acapa",
-  description: "Web interface for Claude Code",
+  title: "AgentPane",
+  description: "Web interface for AI coding agents",
 };
 
 export default function RootLayout({

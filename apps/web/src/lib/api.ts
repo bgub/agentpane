@@ -1,6 +1,9 @@
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3456"
 
 export const api = {
+  health: (): Promise<Response> =>
+    fetch(`${API_BASE}/api/health`, { signal: AbortSignal.timeout(2000) }),
+
   sessions: {
     list: (): Promise<Response> =>
       fetch(`${API_BASE}/api/sessions`),

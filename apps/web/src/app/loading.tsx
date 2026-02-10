@@ -26,7 +26,7 @@ export default function Loading() {
 
         {/* Branding */}
         <div className="shrink-0 h-12 flex items-center px-3 border-t border-[var(--t-border)]">
-          <span className="text-xs font-medium text-[var(--t-muted)]">acapa</span>
+          <span className="text-xs font-medium text-[var(--t-muted)]">AgentPane</span>
         </div>
       </div>
 

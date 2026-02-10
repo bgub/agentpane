@@ -47,5 +47,11 @@ next-env.d.ts
 # database
 /data/
 
+# build output
+dist/
+
+# claude code
+.claude/
+
 # effect reference
 .reference/

@@ -4,7 +4,7 @@ import { Context, Effect, Layer } from "effect"
 import * as crypto from "node:crypto"
 import { Session, Turn, MessageBlock, SessionNotFoundError } from "./schema.js"
 
-export class SessionRepo extends Context.Tag("@acapa/SessionRepo")<
+export class SessionRepo extends Context.Tag("@agentpane/SessionRepo")<
   SessionRepo,
   {
     readonly list: () => Effect.Effect<ReadonlyArray<Session>, SqlError>

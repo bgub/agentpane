@@ -5,12 +5,20 @@ import { sessionsRoutes } from "./routes/sessions.js"
 
 const app = new Hono()
 
+// Private Network Access preflight support (public website → localhost)
+app.use("*", async (c, next) => {
+  if (c.req.header("Access-Control-Request-Private-Network") === "true") {
+    c.header("Access-Control-Allow-Private-Network", "true")
+  }
+  await next()
+})
+
 app.use("*", cors({ origin: "*", credentials: true }))
 
-// All session routes are mounted under /api/sessions
-// The sessionsRoutes handler includes all sub-routes (:id/prompt, :id/events, etc.)
+app.get("/api/health", (c) => c.json({ app: "agentpane", status: "ok" }))
+
 app.route("/api/sessions", sessionsRoutes)
 
 serve({ fetch: app.fetch, port: 3456 }, (info) => {
-  console.log(`Acapa server running on http://localhost:${info.port}`)
+  console.log(`AgentPane server running on http://localhost:${info.port}`)
 })

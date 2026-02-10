@@ -4,7 +4,7 @@ import { Effect, Layer } from "effect"
 import fs from "node:fs"
 import path from "node:path"
 
-// Database lives at monorepo root: ../../data/acapa.db (relative to apps/server/)
+// Database lives at monorepo root: ../../data/agentpane.db (relative to apps/server/)
 const monorepoRoot = path.resolve(import.meta.dirname, "../../../..")
 const dataDir = path.resolve(monorepoRoot, "data")
 if (!fs.existsSync(dataDir)) {
@@ -55,7 +55,7 @@ const migrations = Effect.gen(function* () {
   `
 })
 
-const dbPath = path.resolve(monorepoRoot, "data", "acapa.db")
+const dbPath = path.resolve(monorepoRoot, "data", "agentpane.db")
 
 const SqliteBaseLive = SqliteNode.layer({ filename: dbPath })
 
