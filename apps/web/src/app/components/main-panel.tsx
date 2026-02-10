@@ -1,12 +1,12 @@
 "use client"
 
-import { useState, useCallback, useEffect } from "react"
+import { useState, useCallback, useEffect, useRef } from "react"
 import { useSession } from "./session-provider"
 import { BackendOfflineScreen } from "./backend-offline-screen"
 import { SessionSetupScreen } from "./session-setup-screen"
 import { ChatHeader } from "./chat-header"
 import { ChatFooter } from "./chat-footer"
-import ChatView from "./chat-view"
+import ChatView, { type ConfigOption } from "./chat-view"
 import { api } from "@/lib/api"
 
 export function MainPanel() {
@@ -24,11 +24,15 @@ export function MainPanel() {
   const [connecting, setConnecting] = useState(false)
   const [lastSentPrompt, setLastSentPrompt] = useState<{ text: string; ts: number } | null>(null)
   const [promptError, setPromptError] = useState<{ message: string; ts: number } | null>(null)
+  const [configOptions, setConfigOptions] = useState<ConfigOption[]>([])
+  const configOptionsRef = useRef(configOptions)
+  configOptionsRef.current = configOptions
 
   // Clear per-session transient state when switching sessions
   useEffect(() => {
     setLastSentPrompt(null)
     setPromptError(null)
+    setConfigOptions([])
   }, [activeSessionId])
 
   const activeSession = sessions.find((s) => s.id === activeSessionId)
@@ -58,6 +62,31 @@ export function MainPanel() {
   const disconnectAgent = useCallback(async () => {
     if (!activeSession) return
     await api.sessions.disconnect(activeSession.id).catch(() => {})
+  }, [activeSession])
+
+  const handleConfigOptionsChange = useCallback((opts: ConfigOption[]) => {
+    setConfigOptions(opts)
+  }, [])
+
+  const handleSetConfigOption = useCallback(async (configId: string, value: string) => {
+    if (!activeSession) return
+    // Optimistic update
+    const prev = configOptionsRef.current
+    setConfigOptions(prev.map((opt) =>
+      opt.id === configId ? { ...opt, currentValue: value } : opt
+    ))
+    try {
+      const res = await api.sessions.setConfig(activeSession.id, configId, value)
+      if (res.ok) {
+        const updated = await res.json() as ConfigOption[]
+        setConfigOptions(updated)
+      } else {
+        // Revert on failure
+        setConfigOptions(prev)
+      }
+    } catch {
+      setConfigOptions(prev)
+    }
   }, [activeSession])
 
   const cancelPrompt = useCallback(() => {
@@ -110,8 +139,10 @@ export function MainPanel() {
         connected={connected}
         prompting={prompting}
         connecting={connecting}
+        configOptions={configOptions}
         onConnect={connectAgent}
         onDisconnect={disconnectAgent}
+        onSetConfigOption={handleSetConfigOption}
       />
 
       <div className="flex-1 min-h-0 relative">
@@ -127,6 +158,7 @@ export function MainPanel() {
             promptError={promptError}
             onPromptingChange={onPromptingChange}
             onConnectionChange={onConnectionChange}
+            onConfigOptionsChange={handleConfigOptionsChange}
           />
         ) : backendStatus === "checking" ? null : (
           <div className="flex h-full items-center justify-center text-[var(--t-muted)] text-sm">

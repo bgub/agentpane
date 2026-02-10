@@ -60,6 +60,16 @@ export const api = {
 
     disconnect: (id: string): Promise<Response> =>
       fetch(`${API_BASE}/api/sessions/${id}/connect`, { method: "DELETE" }),
+
+    config: (id: string): Promise<Response> =>
+      fetch(`${API_BASE}/api/sessions/${id}/config`),
+
+    setConfig: (id: string, configId: string, value: string): Promise<Response> =>
+      fetch(`${API_BASE}/api/sessions/${id}/config`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ configId, value }),
+      }),
   },
 
   eventsUrl: (id: string): string =>

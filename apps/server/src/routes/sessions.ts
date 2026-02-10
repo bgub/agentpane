@@ -182,6 +182,31 @@ app.post("/:id/permission", async (c) => {
   return matchRouteExit(exit, c)
 })
 
+// GET /sessions/:id/config — get current config options
+app.get("/:id/config", async (c) => {
+  const id = c.req.param("id")
+  const exit = await AppRuntime.runPromiseExit(
+    Effect.flatMap(AcpClient, (acp) => acp.getConfigOptions(id))
+  )
+  return matchRouteExit(exit, c)
+})
+
+// POST /sessions/:id/config — set a config option
+app.post("/:id/config", async (c) => {
+  const id = c.req.param("id")
+  const body = await c.req.json()
+  const { configId, value } = body
+
+  if (!configId || typeof configId !== "string" || typeof value !== "string") {
+    return c.json({ error: "configId and value are required" }, 400)
+  }
+
+  const exit = await AppRuntime.runPromiseExit(
+    Effect.flatMap(AcpClient, (acp) => acp.setConfigOption(id, configId, value))
+  )
+  return matchRouteExit(exit, c)
+})
+
 // POST /sessions/:id/cancel — cancel an in-progress prompt
 app.post("/:id/cancel", async (c) => {
   const id = c.req.param("id")

@@ -43,6 +43,7 @@ interface AgentConnection {
   pendingPermissions: Map<string, { resolve: (outcome: RequestPermissionOutcome) => void }>
   cwd: string
   cleaned: boolean
+  configOptions: Array<Record<string, unknown>>
 }
 
 interface SubscribeResult {
@@ -77,6 +78,14 @@ export class AcpClient extends Context.Tag("@agentpane/AcpClient")<
     ) => Effect.Effect<void, AcpConnectionError>
     readonly connectedSessionIds: () => ReadonlySet<string>
     readonly promptingSessionIds: () => ReadonlySet<string>
+    readonly getConfigOptions: (
+      sessionId: string
+    ) => Effect.Effect<Array<Record<string, unknown>>, AcpConnectionError>
+    readonly setConfigOption: (
+      sessionId: string,
+      configId: string,
+      value: string
+    ) => Effect.Effect<Array<Record<string, unknown>>, AcpConnectionError>
     readonly ensureBroadcaster: (sessionId: string) => EventBroadcaster
     readonly removeBroadcaster: (sessionId: string) => void
   }
@@ -233,6 +242,11 @@ export class AcpClient extends Context.Tag("@agentpane/AcpClient")<
                   JSON.stringify(update)
                 )
               ).catch(() => {})
+            }
+
+            // Keep stored configOptions in sync when agent pushes updates
+            if (eventType === "config_option_update" && conn) {
+              conn.configOptions = (update.configOptions as Array<Record<string, unknown>>) ?? []
             }
 
             // Broadcast to all subscribers via session-level broadcaster
@@ -481,6 +495,7 @@ export class AcpClient extends Context.Tag("@agentpane/AcpClient")<
             pendingPermissions: new Map(),
             cwd: effectiveCwd,
             cleaned: false,
+            configOptions: (sessionResponse as Record<string, unknown>).configOptions as Array<Record<string, unknown>> ?? [],
           }
           connRef.current = agentConn
           connections.set(sessionId, agentConn)
@@ -499,10 +514,13 @@ export class AcpClient extends Context.Tag("@agentpane/AcpClient")<
             cleanupConnection(sessionId, agentConn)
           })
 
-          // Broadcast connected event
+          // Broadcast connected event (include configOptions so frontend gets initial state)
           const broadcaster = broadcasters.get(sessionId)
           if (broadcaster) {
-            broadcaster.broadcast({ sessionUpdate: "connected" })
+            broadcaster.broadcast({
+              sessionUpdate: "connected",
+              configOptions: agentConn.configOptions,
+            })
           }
 
           return { agentSessionId }
@@ -675,6 +693,56 @@ export class AcpClient extends Context.Tag("@agentpane/AcpClient")<
         }
       )
 
+      const getConfigOptions = Effect.fn("AcpClient.getConfigOptions")(
+        function* (sessionId: string) {
+          const conn = connections.get(sessionId)
+          if (!conn) {
+            return yield* new AcpConnectionError({
+              message: "Agent not connected for this session",
+            })
+          }
+          return conn.configOptions
+        }
+      )
+
+      const setConfigOption = Effect.fn("AcpClient.setConfigOption")(
+        function* (sessionId: string, configId: string, value: string) {
+          const conn = connections.get(sessionId)
+          if (!conn) {
+            return yield* new AcpConnectionError({
+              message: "Agent not connected for this session",
+            })
+          }
+
+          const response = yield* Effect.tryPromise({
+            try: () =>
+              conn.connection.setSessionConfigOption({
+                sessionId: conn.agentSessionId,
+                configId,
+                value,
+              }),
+            catch: (err) =>
+              new AcpConnectionError({
+                message: `Failed to set config option: ${err}`,
+              }),
+          })
+
+          const updated = (response as Record<string, unknown>).configOptions as Array<Record<string, unknown>> ?? []
+          conn.configOptions = updated
+
+          // Broadcast so all connected clients see the update
+          const broadcaster = broadcasters.get(sessionId)
+          if (broadcaster) {
+            broadcaster.broadcast({
+              sessionUpdate: "config_option_update",
+              configOptions: updated,
+            })
+          }
+
+          return updated
+        }
+      )
+
       const isConnected = (sessionId: string): Effect.Effect<boolean> =>
         Effect.succeed(connections.has(sessionId))
 
@@ -687,6 +755,8 @@ export class AcpClient extends Context.Tag("@agentpane/AcpClient")<
         isConnected,
         subscribe,
         unsubscribe,
+        getConfigOptions,
+        setConfigOption,
         connectedSessionIds: () =>
           new Set(connections.keys()) as ReadonlySet<string>,
         promptingSessionIds: () => promptingSessions as ReadonlySet<string>,

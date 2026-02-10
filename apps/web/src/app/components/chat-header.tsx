@@ -3,17 +3,24 @@
 import { useState, useEffect } from "react"
 import { GitBranch, Loader2, Plug, Unplug } from "lucide-react"
 import { api } from "@/lib/api"
+import type { ConfigOption, ConfigSelectGroup } from "./chat-view"
 
 interface ChatHeaderProps {
   cwd?: string | undefined
   connected: boolean
   prompting: boolean
   connecting: boolean
+  configOptions?: ConfigOption[]
   onConnect: () => void
   onDisconnect: () => void
+  onSetConfigOption?: (configId: string, value: string) => void
 }
 
-export function ChatHeader({ cwd, connected, prompting, connecting, onConnect, onDisconnect }: ChatHeaderProps) {
+function isGroup(opt: ConfigOption["options"][number]): opt is ConfigSelectGroup {
+  return "group" in opt
+}
+
+export function ChatHeader({ cwd, connected, prompting, connecting, configOptions, onConnect, onDisconnect, onSetConfigOption }: ChatHeaderProps) {
   const [branch, setBranch] = useState<string | null>(null)
 
   useEffect(() => {
@@ -46,6 +53,27 @@ export function ChatHeader({ cwd, connected, prompting, connecting, onConnect, o
         <span />
       )}
       <div className="flex items-center gap-3 text-xs">
+        {configOptions && configOptions.length > 0 && configOptions.map((opt) => (
+          <select
+            key={opt.id}
+            value={opt.currentValue}
+            onChange={(e) => onSetConfigOption?.(opt.id, e.target.value)}
+            title={opt.description || opt.name}
+            className="h-6 px-1.5 rounded border border-[var(--t-border)] bg-[var(--t-surface)] text-[var(--t-text)] text-xs outline-none cursor-pointer hover:border-[var(--t-accent)] transition-colors"
+          >
+            {opt.options.map((o) =>
+              isGroup(o) ? (
+                <optgroup key={o.group} label={o.name}>
+                  {o.options.map((go) => (
+                    <option key={go.value} value={go.value}>{go.name}</option>
+                  ))}
+                </optgroup>
+              ) : (
+                <option key={o.value} value={o.value}>{o.name}</option>
+              )
+            )}
+          </select>
+        ))}
         {prompting && (
           <span className="flex items-center gap-1.5 text-[var(--t-amber)]">
             <span className="size-1.5 rounded-full bg-[var(--t-amber)] animate-pulse" />

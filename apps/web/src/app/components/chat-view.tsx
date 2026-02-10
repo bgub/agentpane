@@ -23,6 +23,15 @@ interface BlockData {
   created_at: number
 }
 
+export interface ConfigSelectOption { value: string; name: string; description?: string }
+export interface ConfigSelectGroup { group: string; name: string; options: ConfigSelectOption[] }
+export interface ConfigOption {
+  id: string; name: string; description?: string
+  category?: string; type: "select"
+  currentValue: string
+  options: (ConfigSelectOption | ConfigSelectGroup)[]
+}
+
 interface ChatViewProps {
   sessionId: string
   connected: boolean
@@ -30,6 +39,7 @@ interface ChatViewProps {
   promptError: { message: string; ts: number } | null
   onPromptingChange?: (sessionId: string, prompting: boolean) => void
   onConnectionChange?: (sessionId: string, connected: boolean, config?: { cwd: string; agent_type: string }) => void
+  onConfigOptionsChange?: (configOptions: ConfigOption[]) => void
 }
 
 interface PermissionOption {
@@ -48,9 +58,16 @@ interface ToolCallState {
   permissionRequest?: { requestId: string; options: PermissionOption[] } | undefined
 }
 
+interface PlanEntry {
+  content: string
+  priority: "high" | "medium" | "low"
+  status: "pending" | "in_progress" | "completed"
+}
+
 type StreamingBlock =
   | { type: "text"; content: string }
   | { type: "tool_call"; state: ToolCallState }
+  | { type: "plan"; entries: PlanEntry[] }
 
 const markdownPlugins = { code }
 
@@ -406,6 +423,34 @@ function GenericDetails({
   )
 }
 
+function PlanView({ entries }: { entries: PlanEntry[] }) {
+  return (
+    <div className="my-1.5 rounded-md bg-[var(--t-surface)] border border-[var(--t-border)] px-3 py-2">
+      <div className="text-[10px] font-mono uppercase tracking-wider text-[var(--t-dim)] mb-1.5">Plan</div>
+      <div className="space-y-0.5">
+        {entries.map((entry, i) => (
+          <div
+            key={i}
+            className="flex items-center gap-2 text-xs font-mono py-0.5"
+            style={{ opacity: entry.priority === "low" ? 0.55 : entry.priority === "medium" ? 0.8 : 1 }}
+          >
+            {entry.status === "completed" ? (
+              <Check className="size-3.5 shrink-0 text-[var(--t-green)]" />
+            ) : entry.status === "in_progress" ? (
+              <Loader2 className="size-3.5 shrink-0 animate-spin text-[var(--t-amber)]" />
+            ) : (
+              <span className="size-3.5 shrink-0 inline-flex items-center justify-center text-[var(--t-dim)]">&#9702;</span>
+            )}
+            <span className={entry.status === "completed" ? "text-[var(--t-dim)]" : "text-[var(--t-text)]"}>
+              {entry.content}
+            </span>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
 function parseToolCallBlock(block: BlockData): ToolCallState {
   try {
     const data = JSON.parse(block.content)
@@ -545,6 +590,16 @@ function applyEventToBlocks(
         blocks.push({ type: "tool_call", state })
       }
     }
+  } else if (eventType === "plan") {
+    const entries = data.entries as PlanEntry[]
+    const existing = blocks.find(
+      (b): b is StreamingBlock & { type: "plan" } => b.type === "plan"
+    )
+    if (existing) {
+      existing.entries = entries
+    } else {
+      blocks.push({ type: "plan", entries })
+    }
   } else if (eventType === "permission_resolved") {
     const requestId = data.requestId as string
     const tc = blocks.find(
@@ -566,6 +621,7 @@ export default function ChatView({
   promptError,
   onPromptingChange,
   onConnectionChange,
+  onConfigOptionsChange,
 }: ChatViewProps) {
   const [turns, setTurns] = useState<TurnData[]>([])
   const [streamingBlocks, setStreamingBlocks] = useState<StreamingBlock[]>([])
@@ -678,6 +734,9 @@ export default function ChatView({
           setPrompting(isPrompting)
         } else if (eventType === "connected") {
           onConnectionChange?.(sessionId, true)
+          onConfigOptionsChange?.((data.configOptions as ConfigOption[]) ?? [])
+        } else if (eventType === "config_option_update") {
+          onConfigOptionsChange?.((data.configOptions as ConfigOption[]) ?? [])
         } else if (eventType === "prompt_started") {
           setPrompting(true)
           blocksRef.current = []
@@ -699,6 +758,8 @@ export default function ChatView({
         } else if (eventType === "disconnected") {
           setPrompting(false)
           onConnectionChange?.(sessionId, false)
+          onConfigOptionsChange?.([])
+
         } else {
           // agent_message_chunk, tool_call, tool_call_update, permission_request, permission_resolved
           const updated = applyEventToBlocks(blocksRef.current, data)
@@ -719,7 +780,7 @@ export default function ChatView({
       blocksRef.current = []
       setStreamingBlocks([])
     }
-  }, [sessionId, refreshConversation, onConnectionChange])
+  }, [sessionId, refreshConversation, onConnectionChange, onConfigOptionsChange])
 
   return (
     <div ref={scrollRef} className="h-full overflow-y-auto">
@@ -780,6 +841,10 @@ export default function ChatView({
                   <Streamdown plugins={markdownPlugins} isAnimating={i === streamingBlocks.length - 1}>
                     {block.content}
                   </Streamdown>
+                </div>
+              ) : block.type === "plan" ? (
+                <div key={`stream-${i}`} className="pl-5 border-l-2 border-[var(--t-accent)]">
+                  <PlanView entries={block.entries} />
                 </div>
               ) : (
                 <div key={`stream-${i}`} className="pl-5 border-l-2 border-[var(--t-accent)]">
