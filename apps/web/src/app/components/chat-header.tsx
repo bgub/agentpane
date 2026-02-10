@@ -1,6 +1,8 @@
 "use client"
 
-import { Loader2, Plug, Unplug } from "lucide-react"
+import { useState, useEffect } from "react"
+import { GitBranch, Loader2, Plug, Unplug } from "lucide-react"
+import { api } from "@/lib/api"
 
 interface ChatHeaderProps {
   cwd?: string | undefined
@@ -12,10 +14,34 @@ interface ChatHeaderProps {
 }
 
 export function ChatHeader({ cwd, connected, prompting, connecting, onConnect, onDisconnect }: ChatHeaderProps) {
+  const [branch, setBranch] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (!cwd) { setBranch(null); return }
+    let stale = false
+    api.gitBranch(cwd)
+      .then((res) => res.json())
+      .then((data: { branch: string | null }) => {
+        if (!stale) setBranch(data.branch)
+      })
+      .catch(() => {
+        if (!stale) setBranch(null)
+      })
+    return () => { stale = true }
+  }, [cwd])
+
   return (
     <div className="flex h-10 shrink-0 items-center justify-between px-4 bg-[var(--t-surface)] border-b border-[var(--t-border)]">
       {cwd ? (
-        <span className="text-xs font-semibold text-[var(--t-accent)] truncate min-w-0">{cwd.replace(/^\/home\/[^/]+/, '~')}</span>
+        <div className="flex items-center gap-2.5 min-w-0">
+          <span className="text-xs font-semibold text-[var(--t-accent)] truncate">{cwd.replace(/^\/home\/[^/]+/, '~')}</span>
+          {branch && (
+            <span className="flex items-center gap-1 text-[11px] text-[var(--t-muted)] shrink-0">
+              <GitBranch className="size-3" />
+              {branch}
+            </span>
+          )}
+        </div>
       ) : (
         <span />
       )}

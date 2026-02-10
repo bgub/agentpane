@@ -57,4 +57,7 @@ export const api = {
 
   eventsUrl: (id: string): string =>
     `${API_BASE}/api/sessions/${id}/events`,
+
+  gitBranch: (cwd: string): Promise<Response> =>
+    fetch(`${API_BASE}/api/git-branch?cwd=${encodeURIComponent(cwd)}`),
 }

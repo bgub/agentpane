@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useCallback } from "react"
+import { useState, useCallback, useEffect } from "react"
 import { useSession } from "./session-provider"
 import { BackendOfflineScreen } from "./backend-offline-screen"
 import { SessionSetupScreen } from "./session-setup-screen"
@@ -24,6 +24,12 @@ export function MainPanel() {
   const [connecting, setConnecting] = useState(false)
   const [lastSentPrompt, setLastSentPrompt] = useState<{ text: string; ts: number } | null>(null)
   const [promptError, setPromptError] = useState<{ message: string; ts: number } | null>(null)
+
+  // Clear per-session transient state when switching sessions
+  useEffect(() => {
+    setLastSentPrompt(null)
+    setPromptError(null)
+  }, [activeSessionId])
 
   const activeSession = sessions.find((s) => s.id === activeSessionId)
   const connected = activeSession ? connectedSessionIds.has(activeSession.id) : false
@@ -115,7 +121,6 @@ export function MainPanel() {
           <SessionSetupScreen />
         ) : activeSession ? (
           <ChatView
-            key={activeSession.id}
             sessionId={activeSession.id}
             connected={connected}
             lastSentPrompt={lastSentPrompt}

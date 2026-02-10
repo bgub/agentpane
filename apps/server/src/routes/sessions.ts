@@ -74,7 +74,7 @@ app.post("/", async (c) => {
         connected = true
       }
 
-      return { ...session, connected, prompting: false }
+      return { ...session, cwd, connected, prompting: false }
     })
   )
 

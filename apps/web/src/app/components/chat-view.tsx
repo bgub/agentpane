@@ -479,6 +479,19 @@ export default function ChatView({
   const lastPromptTsRef = useRef(0)
   const lastErrorTsRef = useRef(0)
 
+  // Synchronous reset on session switch (clears before paint — no stale frame)
+  const [prevSessionId, setPrevSessionId] = useState(sessionId)
+  if (prevSessionId !== sessionId) {
+    setPrevSessionId(sessionId)
+    setTurns([])
+    setStreamingBlocks([])
+    setPrompting(false)
+    blocksRef.current = []
+    // Mark current prompt/error as consumed so they don't replay in the new session
+    lastPromptTsRef.current = lastSentPrompt?.ts ?? 0
+    lastErrorTsRef.current = promptError?.ts ?? 0
+  }
+
   const hasStreamingContent = streamingBlocks.length > 0
 
   // Auto-scroll to bottom
@@ -530,14 +543,16 @@ export default function ChatView({
     }
   }, [promptError])
 
-  // Load conversation on mount
+  // Load conversation (keeps old turns visible until new data arrives)
   useEffect(() => {
+    let stale = false
     api.sessions.conversation(sessionId)
       .then((res) => res.json())
       .then((data: TurnData[]) => {
-        setTurns(data)
+        if (!stale) setTurns(data)
       })
       .catch(() => {})
+    return () => { stale = true }
   }, [sessionId])
 
   // Re-fetch conversation from DB
