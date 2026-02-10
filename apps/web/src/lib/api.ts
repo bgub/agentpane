@@ -61,6 +61,9 @@ export const api = {
     disconnect: (id: string): Promise<Response> =>
       fetch(`${API_BASE}/api/sessions/${id}/connect`, { method: "DELETE" }),
 
+    commands: (id: string): Promise<Response> =>
+      fetch(`${API_BASE}/api/sessions/${id}/commands`),
+
     config: (id: string): Promise<Response> =>
       fetch(`${API_BASE}/api/sessions/${id}/config`),
 

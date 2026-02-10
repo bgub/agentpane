@@ -32,6 +32,12 @@ export interface ConfigOption {
   options: (ConfigSelectOption | ConfigSelectGroup)[]
 }
 
+export interface AvailableCommand {
+  name: string
+  description: string
+  input?: { hint: string } | null
+}
+
 interface ChatViewProps {
   sessionId: string
   connected: boolean
@@ -40,6 +46,7 @@ interface ChatViewProps {
   onPromptingChange?: (sessionId: string, prompting: boolean) => void
   onConnectionChange?: (sessionId: string, connected: boolean, config?: { cwd: string; agent_type: string }) => void
   onConfigOptionsChange?: (configOptions: ConfigOption[]) => void
+  onAvailableCommandsChange?: (commands: AvailableCommand[]) => void
 }
 
 interface PermissionOption {
@@ -622,6 +629,7 @@ export default function ChatView({
   onPromptingChange,
   onConnectionChange,
   onConfigOptionsChange,
+  onAvailableCommandsChange,
 }: ChatViewProps) {
   const [turns, setTurns] = useState<TurnData[]>([])
   const [streamingBlocks, setStreamingBlocks] = useState<StreamingBlock[]>([])
@@ -735,8 +743,11 @@ export default function ChatView({
         } else if (eventType === "connected") {
           onConnectionChange?.(sessionId, true)
           onConfigOptionsChange?.((data.configOptions as ConfigOption[]) ?? [])
+          onAvailableCommandsChange?.((data.availableCommands as AvailableCommand[]) ?? [])
         } else if (eventType === "config_option_update") {
           onConfigOptionsChange?.((data.configOptions as ConfigOption[]) ?? [])
+        } else if (eventType === "available_commands_update") {
+          onAvailableCommandsChange?.((data.availableCommands as AvailableCommand[]) ?? [])
         } else if (eventType === "prompt_started") {
           setPrompting(true)
           blocksRef.current = []
@@ -759,6 +770,7 @@ export default function ChatView({
           setPrompting(false)
           onConnectionChange?.(sessionId, false)
           onConfigOptionsChange?.([])
+          onAvailableCommandsChange?.([])
 
         } else {
           // agent_message_chunk, tool_call, tool_call_update, permission_request, permission_resolved
@@ -780,7 +792,7 @@ export default function ChatView({
       blocksRef.current = []
       setStreamingBlocks([])
     }
-  }, [sessionId, refreshConversation, onConnectionChange, onConfigOptionsChange])
+  }, [sessionId, refreshConversation, onConnectionChange, onConfigOptionsChange, onAvailableCommandsChange])
 
   return (
     <div ref={scrollRef} className="h-full overflow-y-auto">

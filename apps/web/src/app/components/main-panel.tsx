@@ -6,7 +6,7 @@ import { BackendOfflineScreen } from "./backend-offline-screen"
 import { SessionSetupScreen } from "./session-setup-screen"
 import { ChatHeader } from "./chat-header"
 import { ChatFooter } from "./chat-footer"
-import ChatView, { type ConfigOption } from "./chat-view"
+import ChatView, { type ConfigOption, type AvailableCommand } from "./chat-view"
 import { api } from "@/lib/api"
 
 export function MainPanel() {
@@ -25,6 +25,7 @@ export function MainPanel() {
   const [lastSentPrompt, setLastSentPrompt] = useState<{ text: string; ts: number } | null>(null)
   const [promptError, setPromptError] = useState<{ message: string; ts: number } | null>(null)
   const [configOptions, setConfigOptions] = useState<ConfigOption[]>([])
+  const [availableCommands, setAvailableCommands] = useState<AvailableCommand[]>([])
   const configOptionsRef = useRef(configOptions)
   configOptionsRef.current = configOptions
 
@@ -33,6 +34,7 @@ export function MainPanel() {
     setLastSentPrompt(null)
     setPromptError(null)
     setConfigOptions([])
+    setAvailableCommands([])
   }, [activeSessionId])
 
   const activeSession = sessions.find((s) => s.id === activeSessionId)
@@ -66,6 +68,10 @@ export function MainPanel() {
 
   const handleConfigOptionsChange = useCallback((opts: ConfigOption[]) => {
     setConfigOptions(opts)
+  }, [])
+
+  const handleAvailableCommandsChange = useCallback((cmds: AvailableCommand[]) => {
+    setAvailableCommands(cmds)
   }, [])
 
   const handleSetConfigOption = useCallback(async (configId: string, value: string) => {
@@ -159,6 +165,7 @@ export function MainPanel() {
             onPromptingChange={onPromptingChange}
             onConnectionChange={onConnectionChange}
             onConfigOptionsChange={handleConfigOptionsChange}
+            onAvailableCommandsChange={handleAvailableCommandsChange}
           />
         ) : backendStatus === "checking" ? null : (
           <div className="flex h-full items-center justify-center text-[var(--t-muted)] text-sm">
@@ -173,6 +180,7 @@ export function MainPanel() {
         prompting={prompting}
         connecting={connecting}
         connected={connected}
+        availableCommands={availableCommands}
         onSend={sendPrompt}
         onCancel={cancelPrompt}
       />

@@ -44,6 +44,7 @@ interface AgentConnection {
   cwd: string
   cleaned: boolean
   configOptions: Array<Record<string, unknown>>
+  availableCommands: Array<Record<string, unknown>>
 }
 
 interface SubscribeResult {
@@ -78,6 +79,9 @@ export class AcpClient extends Context.Tag("@agentpane/AcpClient")<
     ) => Effect.Effect<void, AcpConnectionError>
     readonly connectedSessionIds: () => ReadonlySet<string>
     readonly promptingSessionIds: () => ReadonlySet<string>
+    readonly getAvailableCommands: (
+      sessionId: string
+    ) => Effect.Effect<Array<Record<string, unknown>>, AcpConnectionError>
     readonly getConfigOptions: (
       sessionId: string
     ) => Effect.Effect<Array<Record<string, unknown>>, AcpConnectionError>
@@ -247,6 +251,11 @@ export class AcpClient extends Context.Tag("@agentpane/AcpClient")<
             // Keep stored configOptions in sync when agent pushes updates
             if (eventType === "config_option_update" && conn) {
               conn.configOptions = (update.configOptions as Array<Record<string, unknown>>) ?? []
+            }
+
+            // Keep stored availableCommands in sync when agent pushes updates
+            if (eventType === "available_commands_update" && conn) {
+              conn.availableCommands = (update.availableCommands as Array<Record<string, unknown>>) ?? []
             }
 
             // Broadcast to all subscribers via session-level broadcaster
@@ -496,6 +505,7 @@ export class AcpClient extends Context.Tag("@agentpane/AcpClient")<
             cwd: effectiveCwd,
             cleaned: false,
             configOptions: (sessionResponse as Record<string, unknown>).configOptions as Array<Record<string, unknown>> ?? [],
+            availableCommands: (sessionResponse as Record<string, unknown>).availableCommands as Array<Record<string, unknown>> ?? [],
           }
           connRef.current = agentConn
           connections.set(sessionId, agentConn)
@@ -520,6 +530,7 @@ export class AcpClient extends Context.Tag("@agentpane/AcpClient")<
             broadcaster.broadcast({
               sessionUpdate: "connected",
               configOptions: agentConn.configOptions,
+              availableCommands: agentConn.availableCommands,
             })
           }
 
@@ -693,6 +704,18 @@ export class AcpClient extends Context.Tag("@agentpane/AcpClient")<
         }
       )
 
+      const getAvailableCommands = Effect.fn("AcpClient.getAvailableCommands")(
+        function* (sessionId: string) {
+          const conn = connections.get(sessionId)
+          if (!conn) {
+            return yield* new AcpConnectionError({
+              message: "Agent not connected for this session",
+            })
+          }
+          return conn.availableCommands
+        }
+      )
+
       const getConfigOptions = Effect.fn("AcpClient.getConfigOptions")(
         function* (sessionId: string) {
           const conn = connections.get(sessionId)
@@ -755,6 +778,7 @@ export class AcpClient extends Context.Tag("@agentpane/AcpClient")<
         isConnected,
         subscribe,
         unsubscribe,
+        getAvailableCommands,
         getConfigOptions,
         setConfigOption,
         connectedSessionIds: () =>

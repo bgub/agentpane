@@ -1,7 +1,8 @@
 "use client"
 
-import { useState, useRef, useEffect, type KeyboardEvent } from "react"
+import { useState, useRef, useEffect, useCallback, type KeyboardEvent } from "react"
 import { Square } from "lucide-react"
+import type { AvailableCommand } from "./chat-view"
 
 interface ChatFooterProps {
   sessionId: string | null
@@ -9,13 +10,34 @@ interface ChatFooterProps {
   prompting: boolean
   connecting: boolean
   connected: boolean
+  availableCommands: AvailableCommand[]
   onSend: (text: string) => void
   onCancel: () => void
 }
 
-export function ChatFooter({ sessionId, active, prompting, connecting, connected, onSend, onCancel }: ChatFooterProps) {
+export function ChatFooter({ sessionId, active, prompting, connecting, connected, availableCommands, onSend, onCancel }: ChatFooterProps) {
   const [input, setInput] = useState("")
+  const [selectedIndex, setSelectedIndex] = useState(0)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
+  const menuRef = useRef<HTMLDivElement>(null)
+
+  // Compute filtered commands based on current input
+  const filteredCommands = (() => {
+    if (!input.startsWith("/") || availableCommands.length === 0) return []
+    const prefix = input.slice(1).toLowerCase()
+    // Only show autocomplete when typing the command (no space yet)
+    if (input.includes(" ")) return []
+    return availableCommands.filter((cmd) =>
+      cmd.name.toLowerCase().startsWith(prefix)
+    )
+  })()
+
+  const showAutocomplete = filteredCommands.length > 0 && !prompting && !connecting
+
+  // Reset selection when filtered list changes
+  useEffect(() => {
+    setSelectedIndex(0)
+  }, [input])
 
   // Clear input when session changes
   useEffect(() => {
@@ -43,7 +65,36 @@ export function ChatFooter({ sessionId, active, prompting, connecting, connected
     return () => window.removeEventListener("keydown", handleGlobalKeyDown)
   }, [active])
 
+  const selectCommand = useCallback((cmd: AvailableCommand) => {
+    setInput(`/${cmd.name} `)
+    textareaRef.current?.focus()
+  }, [])
+
   const handleKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
+    if (showAutocomplete) {
+      if (e.key === "ArrowDown") {
+        e.preventDefault()
+        setSelectedIndex((i) => Math.min(i + 1, filteredCommands.length - 1))
+        return
+      }
+      if (e.key === "ArrowUp") {
+        e.preventDefault()
+        setSelectedIndex((i) => Math.max(i - 1, 0))
+        return
+      }
+      if (e.key === "Tab" || (e.key === "Enter" && !e.shiftKey)) {
+        e.preventDefault()
+        const cmd = filteredCommands[selectedIndex]
+        if (cmd) selectCommand(cmd)
+        return
+      }
+      if (e.key === "Escape") {
+        e.preventDefault()
+        setInput("")
+        return
+      }
+    }
+
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault()
       const trimmed = input.trim()
@@ -67,7 +118,36 @@ export function ChatFooter({ sessionId, active, prompting, connecting, connected
   }
 
   return (
-    <div className="shrink-0 h-12 border-t border-[var(--t-border)] bg-[var(--t-surface)] px-5 flex items-center">
+    <div className="shrink-0 h-12 border-t border-[var(--t-border)] bg-[var(--t-surface)] px-5 flex items-center relative">
+      {/* Autocomplete dropdown */}
+      {showAutocomplete && (
+        <div
+          ref={menuRef}
+          className="absolute bottom-full left-0 right-0 px-5 pb-1"
+        >
+          <div className="max-w-3xl mx-auto rounded-md border border-[var(--t-border)] bg-[var(--t-surface)] shadow-lg overflow-hidden">
+            {filteredCommands.map((cmd, i) => (
+              <button
+                key={cmd.name}
+                onMouseDown={(e) => {
+                  e.preventDefault()
+                  selectCommand(cmd)
+                }}
+                onMouseEnter={() => setSelectedIndex(i)}
+                className={`w-full flex items-center gap-3 px-3 py-1.5 text-left text-sm transition-colors cursor-pointer ${
+                  i === selectedIndex
+                    ? "bg-[var(--t-elevated)]"
+                    : "hover:bg-[var(--t-elevated)]/50"
+                }`}
+              >
+                <span className="font-mono text-[var(--t-accent)] shrink-0">/{cmd.name}</span>
+                <span className="text-[var(--t-muted)] truncate text-xs">{cmd.description}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
       <div className="max-w-3xl mx-auto w-full flex items-center gap-2.5">
         <span className={`shrink-0 text-sm font-mono select-none ${
           !active || prompting || connecting ? "text-[var(--t-dim)]" : "text-[var(--t-accent)]"

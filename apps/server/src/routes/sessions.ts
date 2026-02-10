@@ -182,6 +182,15 @@ app.post("/:id/permission", async (c) => {
   return matchRouteExit(exit, c)
 })
 
+// GET /sessions/:id/commands — get available slash commands
+app.get("/:id/commands", async (c) => {
+  const id = c.req.param("id")
+  const exit = await AppRuntime.runPromiseExit(
+    Effect.flatMap(AcpClient, (acp) => acp.getAvailableCommands(id))
+  )
+  return matchRouteExit(exit, c)
+})
+
 // GET /sessions/:id/config — get current config options
 app.get("/:id/config", async (c) => {
   const id = c.req.param("id")
