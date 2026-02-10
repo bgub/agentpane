@@ -310,8 +310,10 @@ export default function ChatView({
       .catch(() => {})
   }, [sessionId])
 
-  // Always-on EventSource connection for SSE events
+  // EventSource for SSE events — only when active to avoid hitting browser connection limits
   useEffect(() => {
+    if (!active) return
+
     const es = new EventSource(api.eventsUrl(sessionId))
 
     es.onmessage = (event) => {
@@ -365,7 +367,7 @@ export default function ChatView({
       blocksRef.current = []
       setStreamingBlocks([])
     }
-  }, [sessionId, refreshConversation, onConnectionChange])
+  }, [active, sessionId, refreshConversation, onConnectionChange])
 
   const connectAgent = useCallback(async () => {
     if (connecting) return

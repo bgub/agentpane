@@ -45,7 +45,7 @@ Pure UI — no backend dependencies (no Effect, no SQLite, no ACP SDK).
 - `src/lib/api.ts` — Backend API client (all fetch calls to `http://localhost:3456`)
 - `src/app/components/session-layout.tsx` — Orchestrator: sidebar + chat views + setup mode
 - `src/app/components/sidebar.tsx` — Session list with Active/History sections, status dots
-- `src/app/components/chat-view.tsx` — Chat display, always-on SSE, prompt input
+- `src/app/components/chat-view.tsx` — Chat display, always-on SSE, prompt input, connect/disconnect button
 - `src/app/components/providers.ts` — Provider info for UI display
 
 ## Key Patterns
@@ -58,6 +58,7 @@ Pure UI — no backend dependencies (no Effect, no SQLite, no ACP SDK).
 - `subscribe()` always succeeds (no `AcpConnectionError`), uses session-level broadcaster
 - `connect()` broadcasts `"connected"` event; `disconnect()`/crash broadcasts `"disconnected"`
 - Frontend EventSource is always-on (no `if (!connected) return` guard)
+- Top bar has connect/disconnect toggle button; submitting a prompt auto-reconnects if disconnected
 - Setup mode lives in `SessionLayout`, not `ChatView` — no DB session until user clicks Start
 - Sidebar splits sessions into Active (connected, with status dots) and History (disconnected, muted)
 

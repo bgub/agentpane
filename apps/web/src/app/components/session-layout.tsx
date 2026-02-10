@@ -151,6 +151,21 @@ export default function SessionLayout() {
       .catch(() => setInitialized(true))
   }, [])
 
+  // Poll for connection/prompting status (keeps sidebar dots accurate without per-session SSE)
+  useEffect(() => {
+    if (!initialized) return
+    const interval = setInterval(() => {
+      api.sessions.status()
+        .then((res) => res.json())
+        .then((data: { connected: string[]; prompting: string[] }) => {
+          setConnectedSessionIds(new Set(data.connected))
+          setPromptingSessionIds(new Set(data.prompting))
+        })
+        .catch(() => {})
+    }, 5000)
+    return () => clearInterval(interval)
+  }, [initialized])
+
   const handleCreate = useCallback(() => {
     setShowSetup(true)
     setActiveSessionId(null)
@@ -257,7 +272,7 @@ export default function SessionLayout() {
   }
 
   return (
-    <div className="flex h-screen bg-[var(--t-bg)]">
+    <div className="flex h-screen bg-[var(--t-bg)] overflow-hidden">
       <Sidebar
         sessions={sessions}
         activeSessionId={activeSessionId}
@@ -272,7 +287,7 @@ export default function SessionLayout() {
         onDelete={handleDelete}
         onRename={handleRename}
       />
-      <div className="flex-1 min-h-0 relative">
+      <div className="flex-1 min-w-0 min-h-0 relative">
         {showSetup && (
           <div className="absolute inset-0 z-10">
             <SessionSetupScreen
