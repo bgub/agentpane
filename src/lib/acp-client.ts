@@ -215,6 +215,7 @@ export class AcpClient extends Context.Tag("@acapa/AcpClient")<
               cwd: params.cwd ?? conn.cwd,
               env,
               stdio: ["ignore", "pipe", "pipe"],
+              shell: true,
             })
 
             const terminal: TerminalState = {
@@ -447,64 +448,45 @@ export class AcpClient extends Context.Tag("@acapa/AcpClient")<
             assistantTurnId: assistantTurn.id,
           })
 
-          // Fire prompt asynchronously using Effect
-          const promptEffect = Effect.tryPromise({
-            try: () =>
-              conn.connection.prompt({
-                sessionId: conn.agentSessionId,
-                prompt: [{ type: "text", text: content }],
-              }),
-            catch: (err) => err,
-          }).pipe(
-            Effect.tapBoth({
-              onSuccess: (response) =>
-                Effect.gen(function* () {
-                  // Persist accumulated text
-                  if (conn.accumulatedText) {
-                    yield* repo
-                      .addMessageBlock(assistantTurn.id, "text", conn.accumulatedText)
-                      .pipe(Effect.orDie)
-                  }
-                  // Complete turn
-                  yield* repo
-                    .completeTurn(assistantTurn.id, response.stopReason || "end_turn")
-                    .pipe(Effect.orDie)
-                  // Broadcast done
-                  conn.broadcaster.broadcast({
-                    sessionUpdate: "done",
-                    stopReason: response.stopReason || "end_turn",
-                  })
-                }),
-              onFailure: (err) =>
-                Effect.gen(function* () {
-                  // Persist what we have
-                  if (conn.accumulatedText) {
-                    yield* repo
-                      .addMessageBlock(assistantTurn.id, "text", conn.accumulatedText)
-                      .pipe(Effect.orDie)
-                  }
-                  // Complete turn as error
-                  yield* repo
-                    .completeTurn(assistantTurn.id, "error")
-                    .pipe(Effect.orDie)
-                  // Broadcast error
-                  conn.broadcaster.broadcast({
-                    sessionUpdate: "error",
-                    message: String(err),
-                  })
-                }),
-            }),
-            Effect.ensuring(
-              Effect.sync(() => {
-                conn.prompting = false
-                conn.currentAssistantTurnId = null
-                conn.accumulatedText = ""
-              })
-            ),
-            Effect.ignore
-          )
+          // Fire prompt asynchronously — use runPromise from the layer-level
+          // runtime so DB operations have access to SqlClient
+          const persistCompletion = (stopReason: string) =>
+            Effect.gen(function* () {
+              if (conn.accumulatedText) {
+                yield* repo
+                  .addMessageBlock(assistantTurn.id, "text", conn.accumulatedText)
+                  .pipe(Effect.orDie)
+              }
+              yield* repo
+                .completeTurn(assistantTurn.id, stopReason)
+                .pipe(Effect.orDie)
+            })
 
-          yield* Effect.forkDaemon(promptEffect)
+          conn.connection
+            .prompt({
+              sessionId: conn.agentSessionId,
+              prompt: [{ type: "text", text: content }],
+            })
+            .then(async (response) => {
+              const reason = response.stopReason || "end_turn"
+              await runPromise(persistCompletion(reason))
+              conn.broadcaster.broadcast({
+                sessionUpdate: "done",
+                stopReason: reason,
+              })
+            })
+            .catch(async (err) => {
+              await runPromise(persistCompletion("error")).catch(() => {})
+              conn.broadcaster.broadcast({
+                sessionUpdate: "error",
+                message: String(err),
+              })
+            })
+            .finally(() => {
+              conn.prompting = false
+              conn.currentAssistantTurnId = null
+              conn.accumulatedText = ""
+            })
 
           return { userTurnId: userTurn.id, assistantTurnId: assistantTurn.id }
         }

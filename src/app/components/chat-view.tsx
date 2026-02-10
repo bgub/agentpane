@@ -239,17 +239,22 @@ function applyEventToBlocks(
 }
 
 function SessionSetup({
-  sessionId,
   defaultCwd,
+  active,
   onStart,
 }: {
-  sessionId: string
   defaultCwd: string
+  active: boolean
   onStart: (agentType: string, cwd: string) => void
 }) {
   const [selectedProvider, setSelectedProvider] = useState<string | null>(null)
   const [cwdValue, setCwdValue] = useState(defaultCwd)
   const inputRef = useRef<HTMLInputElement>(null)
+
+  // Auto-focus the cwd input when active
+  useEffect(() => {
+    if (active) inputRef.current?.focus()
+  }, [active])
 
   const handleStart = () => {
     if (!selectedProvider) return
@@ -361,10 +366,30 @@ export default function ChatView({
     if (el) el.scrollTop = el.scrollHeight
   }, [turns, streamingBlocks])
 
-  // Focus textarea when active
+  // Focus textarea when active and capture keyboard input
   useEffect(() => {
-    if (active && !prompting) textareaRef.current?.focus()
-  }, [active, prompting])
+    if (active && !prompting && agentType) textareaRef.current?.focus()
+  }, [active, prompting, agentType])
+
+  useEffect(() => {
+    if (!active || !agentType) return
+
+    const handleGlobalKeyDown = (e: globalThis.KeyboardEvent) => {
+      // Ignore if already focused on an input/textarea, or if modifier keys are held
+      if (
+        e.target instanceof HTMLInputElement ||
+        e.target instanceof HTMLTextAreaElement ||
+        e.metaKey || e.ctrlKey || e.altKey
+      ) return
+      // Only capture printable characters
+      if (e.key.length === 1) {
+        textareaRef.current?.focus()
+      }
+    }
+
+    window.addEventListener("keydown", handleGlobalKeyDown)
+    return () => window.removeEventListener("keydown", handleGlobalKeyDown)
+  }, [active, agentType])
 
   // Notify parent of prompting state
   useEffect(() => {
@@ -584,7 +609,7 @@ export default function ChatView({
         </div>
       )
     }
-    return <SessionSetup sessionId={sessionId} defaultCwd={cwd} onStart={handleSetupStart} />
+    return <SessionSetup defaultCwd={cwd} active={active} onStart={handleSetupStart} />
   }
 
   return (

@@ -80,15 +80,14 @@ export default function Sidebar({
 
   return (
     <div className="flex h-full w-56 min-h-0 flex-col bg-[var(--t-surface)] border-r border-[var(--t-border)]">
-      {/* Header */}
-      <div className="flex h-10 shrink-0 items-center justify-between px-3 border-b border-[var(--t-border)]">
-        <span className="text-xs font-medium text-[var(--t-muted)]">Sessions</span>
+      {/* New session button */}
+      <div className="shrink-0 px-3 pt-3 pb-2">
         <button
           onClick={() => onCreate()}
-          className="rounded p-1 text-[var(--t-muted)] hover:bg-[var(--t-elevated)] hover:text-[var(--t-bright)] transition-colors cursor-pointer"
-          title="New session"
+          className="flex w-full items-center justify-center gap-1.5 rounded-md border border-[var(--t-border)] bg-[var(--t-bg)] px-3 py-2 text-xs font-medium text-[var(--t-text)] hover:bg-[var(--t-elevated)] hover:text-[var(--t-bright)] hover:border-[var(--t-dim)] transition-colors cursor-pointer"
         >
           <Plus className="size-3.5" />
+          New Session
         </button>
       </div>
 
