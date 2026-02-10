@@ -1,15 +1,25 @@
-# Acapa
+# AgentPane
 
-ACP (Agent Client Protocol) frontend — a web UI for interacting with AI coding agents like Claude Code. Spawns ACP agent subprocesses, communicates via JSON-RPC 2.0 over stdio, and displays streamed agent responses, tool calls, and plans in a chat-style interface.
+Web UI for AI coding agents. Users visit [agentpane.dev](https://agentpane.dev), run `npx agentpane` locally, and the webapp connects to their local server to manage agent sessions. The frontend is deployed on Vercel; the backend runs on the user's machine (spawning ACP agent subprocesses, managing SQLite state, and streaming responses via SSE).
+
+Communication with agents uses ACP (Agent Client Protocol) — JSON-RPC 2.0 over stdio.
+
+## Quick Start
+
+```sh
+npx agentpane          # starts local server on port 3456
+# then open https://agentpane.dev
+```
+
+For development: `pnpm dev` starts both server and web via Turbo.
 
 ## Tech Stack
 
 - **Monorepo:** Turborepo + pnpm workspaces
-- **Backend (`apps/server`):** Hono + Effect.ts services/layers, standalone Node.js server on port 3456
-- **Frontend (`apps/web`):** Next.js 16, React 19, Tailwind CSS 4 on port 6767
-- **Database:** SQLite via `@effect/sql-sqlite-node` + `better-sqlite3` at `data/acapa.db`
+- **Backend (`apps/server`):** Hono + Effect.ts services/layers, standalone Node.js server on port 3456. Published to npm as `agentpane`.
+- **Frontend (`apps/web`):** Next.js 16, React 19, Tailwind CSS 4. Deployed to Vercel at [agentpane.dev](https://agentpane.dev).
+- **Database:** SQLite via `@effect/sql-sqlite-node` + `better-sqlite3` at `data/agentpane.db`
 - **ACP:** `@agentclientprotocol/sdk` + `@zed-industries/claude-code-acp`
-- **Dev:** `pnpm dev` starts both server and web via Turbo
 
 ## Architecture
 
