@@ -13,7 +13,7 @@ import {
 } from "@agentclientprotocol/sdk"
 import { nodeToWebWritable, nodeToWebReadable } from "@zed-industries/claude-code-acp"
 import { SessionRepo } from "./session-repo.js"
-import { AcpConnectionError } from "./schema.js"
+import { AcpConnectionError, type Turn, type MessageBlock } from "./schema.js"
 import { EventBroadcaster } from "./event-broadcaster.js"
 import { resolveProviderBin, PROVIDERS } from "./providers.js"
 
@@ -538,6 +538,18 @@ export class AcpClient extends Context.Tag("@agentpane/AcpClient")<
         }
       )
 
+      // Workaround: claude-code-acp doesn't maintain history between prompt() calls,
+      // so we prepend it ourselves. See https://github.com/zed-industries/claude-code-acp/issues/80
+      const formatHistory = (
+        turns: ReadonlyArray<Turn & { blocks: ReadonlyArray<MessageBlock> }>
+      ): string => {
+        const lines = turns.flatMap((t) => {
+          const text = t.blocks.filter((b) => b.kind === "text").map((b) => b.content).join("\n")
+          return text ? [`${t.role === "user" ? "Human" : "Assistant"}: ${text}`] : []
+        })
+        return lines.length ? `<conversation_history>\n${lines.join("\n\n")}\n</conversation_history>\n\n` : ""
+      }
+
       const prompt = Effect.fn("AcpClient.prompt")(
         function* (sessionId: string, content: string) {
           const conn = connections.get(sessionId)
@@ -553,6 +565,9 @@ export class AcpClient extends Context.Tag("@agentpane/AcpClient")<
             })
           }
 
+          // Fetch existing conversation history BEFORE creating new turns
+          const priorTurns = yield* repo.getConversation(sessionId).pipe(Effect.orDie)
+
           // Create user turn + block in DB
           const userTurn = yield* repo.addTurn(sessionId, "user").pipe(Effect.orDie)
           yield* repo.addMessageBlock(userTurn.id, "text", content).pipe(Effect.orDie)
@@ -560,6 +575,9 @@ export class AcpClient extends Context.Tag("@agentpane/AcpClient")<
 
           // Create assistant turn
           const assistantTurn = yield* repo.addTurn(sessionId, "assistant").pipe(Effect.orDie)
+
+          // Build prompt with conversation history prefix
+          const fullPrompt = formatHistory(priorTurns) + content
 
           // Set prompting state
           conn.prompting = true
@@ -593,7 +611,7 @@ export class AcpClient extends Context.Tag("@agentpane/AcpClient")<
           conn.connection
             .prompt({
               sessionId: conn.agentSessionId,
-              prompt: [{ type: "text", text: content }],
+              prompt: [{ type: "text", text: fullPrompt }],
             })
             .then(async (response) => {
               const reason = response.stopReason || "end_turn"

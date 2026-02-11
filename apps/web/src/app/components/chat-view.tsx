@@ -272,6 +272,36 @@ function extractCommand(raw: unknown): string | null {
   return null
 }
 
+function asObject(raw: unknown): Record<string, unknown> | null {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null
+  return raw as Record<string, unknown>
+}
+
+// Detects ExitPlanMode: rawInput has { plan: string, allowedPrompts: array }
+function parseExitPlanMode(raw: unknown): string | null {
+  const obj = asObject(raw)
+  if (!obj) return null
+  if (typeof obj.plan === "string" && Array.isArray(obj.allowedPrompts)) {
+    return obj.plan
+  }
+  return null
+}
+
+// Detects Plan subagent Task tool: rawInput has { subagent_type: "Plan", ... }
+function isPlanSubagent(raw: unknown): boolean {
+  return asObject(raw)?.subagent_type === "Plan"
+}
+
+function MarkdownDetailView({ content }: { content: string }) {
+  return (
+    <div className="text-sm leading-[1.7] text-[var(--t-text)] max-h-96 overflow-y-auto">
+      <Streamdown plugins={markdownPlugins} mode="static">
+        {content}
+      </Streamdown>
+    </div>
+  )
+}
+
 function PermissionButtons({
   sessionId,
   requestId,
@@ -316,13 +346,17 @@ function PermissionButtons({
 
 function ToolCallBox({ state, sessionId }: { state: ToolCallState; sessionId?: string }) {
   const isEdit = state.kind === "edit" && !!parseEditChanges(state.rawInput)
+  const planContent = parseExitPlanMode(state.rawInput)
   const hasPendingPermission = !!state.permissionRequest
-  const [expanded, setExpanded] = useState(isEdit || hasPendingPermission)
+  const [expanded, setExpanded] = useState(isEdit || !!planContent || hasPendingPermission)
 
   // Auto-expand when permission request arrives
   useEffect(() => {
     if (hasPendingPermission) setExpanded(true)
   }, [hasPendingPermission])
+
+  // Hide Plan subagent — the plan is shown by ExitPlanMode below
+  if (isPlanSubagent(state.rawInput)) return null
 
   const outputText = extractOutputText(state.rawOutput)
   const command = extractCommand(state.rawInput)
@@ -331,6 +365,7 @@ function ToolCallBox({ state, sessionId }: { state: ToolCallState; sessionId?: s
   const rawInput = formatOutput(state.rawInput)
   const hasDetails =
     isEdit ||
+    !!planContent ||
     isExecute ||
     !!outputText ||
     (!!rawInput && rawInput !== "{}") ||
@@ -347,7 +382,7 @@ function ToolCallBox({ state, sessionId }: { state: ToolCallState; sessionId?: s
       >
         <span className="text-[var(--t-blue)]">{kindIcon(state.kind)}</span>
         <span className="flex-1 text-left truncate">{state.title}</span>
-        {statusIndicator(state.status)}
+        {planContent ? <Check className="size-3.5 shrink-0 text-[var(--t-green)]" /> : statusIndicator(state.status)}
         {hasDetails && (
           <span className="text-[var(--t-dim)] text-[10px]">{expanded ? "\u25BE" : "\u25B8"}</span>
         )}
@@ -356,6 +391,8 @@ function ToolCallBox({ state, sessionId }: { state: ToolCallState; sessionId?: s
         <div className="border-t border-[var(--t-border)] px-3 py-2 space-y-2">
           {isEdit ? (
             <EditDiffView rawInput={state.rawInput} />
+          ) : planContent ? (
+            <MarkdownDetailView content={planContent} />
           ) : isExecute ? (
             <ExecuteDetails command={command} outputText={outputText} />
           ) : state.kind === "read" ? (
@@ -413,6 +450,7 @@ function GenericDetails({
 }) {
   const showInput = rawInput && rawInput !== "{}"
   const output = outputText || rawOutput
+  const outputIsMarkdown = !!output && output.length > 200 && /^#{1,3}\s/m.test(output)
 
   return (
     <>
@@ -421,11 +459,13 @@ function GenericDetails({
           {rawInput}
         </pre>
       )}
-      {output && (
+      {outputIsMarkdown ? (
+        <MarkdownDetailView content={output} />
+      ) : output ? (
         <pre className="text-xs leading-relaxed font-mono overflow-x-auto whitespace-pre-wrap text-[var(--t-text)] max-h-60 overflow-y-auto">
           {output}
         </pre>
-      )}
+      ) : null}
     </>
   )
 }
