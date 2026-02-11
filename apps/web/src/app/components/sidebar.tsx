@@ -7,7 +7,6 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
-import { ScrollArea } from "@/components/ui/scroll-area"
 import { EllipsisVertical, Loader2, Plus, Sun, Moon, Monitor } from "lucide-react"
 import { useTheme } from "next-themes"
 import { PROVIDER_INFO } from "./providers"
@@ -160,38 +159,36 @@ export default function Sidebar() {
 
   return (
     <div className="flex h-full w-56 min-h-0 flex-col bg-[var(--t-surface)] border-r border-[var(--t-border)]">
-      {/* Header */}
-      <div className="flex h-10 shrink-0 items-center justify-between px-4 border-b border-[var(--t-border)]">
-        <span className="text-xs font-semibold text-[var(--t-bright)]">AgentPane</span>
-        {showCheckingSpinner && (
-          <Loader2 className="size-3 animate-spin text-[var(--t-dim)]" />
-        )}
+      {/* Header — pinned top */}
+      <div className="shrink-0">
+        <div className="flex h-10 items-center justify-between px-4 border-b border-[var(--t-border)]">
+          <span className="text-xs font-semibold text-[var(--t-bright)]">AgentPane</span>
+          {showCheckingSpinner && (
+            <Loader2 className="size-3 animate-spin text-[var(--t-dim)]" />
+          )}
+        </div>
+        <div className="px-3 pt-3 pb-2">
+          <button
+            onClick={() => createSession()}
+            className={`flex w-full items-center justify-center gap-1.5 rounded-md border px-3 py-2 text-xs font-medium transition-colors cursor-pointer ${
+              showSetup
+                ? "border-[var(--t-accent)] bg-[var(--t-accent)]/10 text-[var(--t-accent)]"
+                : "border-[var(--t-border)] bg-[var(--t-bg)] text-[var(--t-text)] hover:bg-[var(--t-elevated)] hover:text-[var(--t-bright)] hover:border-[var(--t-dim)]"
+            }`}
+          >
+            <Plus className="size-3.5" />
+            New Session
+          </button>
+        </div>
       </div>
 
-      {/* New session button */}
-      <div className="shrink-0 px-3 pt-3 pb-2">
-        <button
-          onClick={() => createSession()}
-          className={`flex w-full items-center justify-center gap-1.5 rounded-md border px-3 py-2 text-xs font-medium transition-colors cursor-pointer ${
-            showSetup
-              ? "border-[var(--t-accent)] bg-[var(--t-accent)]/10 text-[var(--t-accent)]"
-              : "border-[var(--t-border)] bg-[var(--t-bg)] text-[var(--t-text)] hover:bg-[var(--t-elevated)] hover:text-[var(--t-bright)] hover:border-[var(--t-dim)]"
-          }`}
-        >
-          <Plus className="size-3.5" />
-          New Session
-        </button>
-      </div>
-
-      {/* Session list */}
-      <ScrollArea className="flex-1">
+      {/* Session list — scrollable */}
+      <div className="flex-1 min-h-0 overflow-y-auto">
         <div className="py-1">
-          {/* Active sessions */}
           {activeSessions.map((session) => (
             <Fragment key={session.id}>{renderSession(session, false)}</Fragment>
           ))}
 
-          {/* History divider */}
           {historySessions.length > 0 && (
             <>
               {activeSessions.length > 0 && (
@@ -208,9 +205,9 @@ export default function Sidebar() {
             </>
           )}
         </div>
-      </ScrollArea>
+      </div>
 
-      {/* Theme toggle */}
+      {/* Footer — pinned bottom */}
       <div className="shrink-0 h-12 flex items-center px-3 border-t border-[var(--t-border)]">
         {mounted && (
           <button
