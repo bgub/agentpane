@@ -41,6 +41,8 @@ export class SessionRepo extends Context.Tag("@agentpane/SessionRepo")<
       ReadonlyArray<Turn & { blocks: ReadonlyArray<MessageBlock> }>,
       SqlError
     >
+    readonly getSetting: (key: string) => Effect.Effect<string | null, SqlError>
+    readonly setSetting: (key: string, value: string) => Effect.Effect<void, SqlError>
   }
 >() {
   static readonly layer = Layer.effect(
@@ -175,6 +177,15 @@ export class SessionRepo extends Context.Tag("@agentpane/SessionRepo")<
         }
       )
 
+      const getSetting = Effect.fn("SessionRepo.getSetting")(function* (key: string) {
+        const rows = yield* sql<{ value: string }>`SELECT value FROM settings WHERE key = ${key}`
+        return rows.length > 0 ? rows[0].value : null
+      })
+
+      const setSetting = Effect.fn("SessionRepo.setSetting")(function* (key: string, value: string) {
+        yield* sql`INSERT OR REPLACE INTO settings (key, value) VALUES (${key}, ${value})`
+      })
+
       return SessionRepo.of({
         list,
         get,
@@ -188,6 +199,8 @@ export class SessionRepo extends Context.Tag("@agentpane/SessionRepo")<
         completeTurn,
         addMessageBlock,
         getConversation,
+        getSetting,
+        setSetting,
       })
     })
   )

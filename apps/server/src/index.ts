@@ -4,9 +4,19 @@ import { bodyLimit } from "hono/body-limit"
 import { serve } from "@hono/node-server"
 import { execFile } from "node:child_process"
 import crypto from "node:crypto"
+import fs from "node:fs"
+import path from "node:path"
+import { Effect, Exit } from "effect"
+import { AppRuntime } from "./lib/runtime.js"
+import { SessionRepo } from "./lib/session-repo.js"
 import { sessionsRoutes } from "./routes/sessions.js"
 
 const AUTH_TOKEN = crypto.randomBytes(24).toString("base64url")
+
+// Write auth token to data dir so the Next.js server can read it for SSR
+const dataDir = process.env.AGENTPANE_DATA_DIR || path.resolve(import.meta.dirname, "../../..", "data")
+if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true })
+fs.writeFileSync(path.join(dataDir, ".auth-token"), AUTH_TOKEN)
 
 const ALLOWED_ORIGINS = ["https://agentpane.dev", "https://www.agentpane.dev"]
 
@@ -77,6 +87,36 @@ app.get("/api/git-branch", async (c) => {
   } catch {
     return c.json({ branch: null })
   }
+})
+
+app.get("/api/settings/:key", async (c) => {
+  const key = c.req.param("key")
+  const exit = await AppRuntime.runPromiseExit(
+    Effect.gen(function* () {
+      const repo = yield* SessionRepo
+      return yield* repo.getSetting(key)
+    })
+  )
+  return Exit.match(exit, {
+    onFailure: () => c.json({ error: "Internal error" }, 500),
+    onSuccess: (value) => value !== null ? c.json({ value }) : c.json({ error: "Not found" }, 404),
+  })
+})
+
+app.put("/api/settings/:key", async (c) => {
+  const key = c.req.param("key")
+  const body = await c.req.json<{ value: string }>()
+  if (typeof body.value !== "string") return c.json({ error: "value is required" }, 400)
+  const exit = await AppRuntime.runPromiseExit(
+    Effect.gen(function* () {
+      const repo = yield* SessionRepo
+      yield* repo.setSetting(key, body.value)
+    })
+  )
+  return Exit.match(exit, {
+    onFailure: () => c.json({ error: "Internal error" }, 500),
+    onSuccess: () => c.body(null, 204),
+  })
 })
 
 app.route("/api/sessions", sessionsRoutes)

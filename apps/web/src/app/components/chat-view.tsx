@@ -5,6 +5,7 @@ import { Check, X, Loader2, Terminal, FileText, Search, Brain, Pencil } from "lu
 import { Streamdown } from "streamdown"
 import { code } from "@streamdown/code"
 import { api } from "@/lib/api"
+import { useSession } from "./session-provider"
 
 interface TurnData {
   id: string
@@ -671,7 +672,16 @@ export default function ChatView({
   onConfigOptionsChange,
   onAvailableCommandsChange,
 }: ChatViewProps) {
-  const [turns, setTurns] = useState<TurnData[]>([])
+  const { consumeInitialConversation } = useSession()
+  const skipFetchRef = useRef(false)
+  const [turns, setTurns] = useState<TurnData[]>(() => {
+    const initial = consumeInitialConversation(sessionId)
+    if (Array.isArray(initial)) {
+      skipFetchRef.current = true
+      return initial as TurnData[]
+    }
+    return []
+  })
   const [streamingBlocks, setStreamingBlocks] = useState<StreamingBlock[]>([])
   const [prompting, setPrompting] = useState(false)
 
@@ -684,7 +694,13 @@ export default function ChatView({
   const [prevSessionId, setPrevSessionId] = useState(sessionId)
   if (prevSessionId !== sessionId) {
     setPrevSessionId(sessionId)
-    setTurns([])
+    const initial = consumeInitialConversation(sessionId)
+    if (Array.isArray(initial)) {
+      setTurns(initial as TurnData[])
+      skipFetchRef.current = true
+    } else {
+      setTurns([])
+    }
     setStreamingBlocks([])
     setPrompting(false)
     blocksRef.current = []
@@ -744,13 +760,20 @@ export default function ChatView({
     }
   }, [promptError])
 
-  // Load conversation (keeps old turns visible until new data arrives)
+  // Load conversation — skip if pre-fetched data was used (from useState init or session switch)
   useEffect(() => {
+    if (skipFetchRef.current) {
+      skipFetchRef.current = false
+      return
+    }
     let stale = false
     api.sessions.conversation(sessionId)
-      .then((res) => res.json())
-      .then((data: TurnData[]) => {
-        if (!stale) setTurns(data)
+      .then((res) => {
+        if (!res.ok) return
+        return res.json()
+      })
+      .then((data: TurnData[] | undefined) => {
+        if (!stale && Array.isArray(data)) setTurns(data)
       })
       .catch(() => {})
     return () => { stale = true }
@@ -759,8 +782,12 @@ export default function ChatView({
   // Re-fetch conversation from DB
   const refreshConversation = useCallback(() => {
     api.sessions.conversation(sessionId)
-      .then((res) => res.json())
+      .then((res) => {
+        if (!res.ok) throw new Error(`HTTP ${res.status}`)
+        return res.json()
+      })
       .then((data: TurnData[]) => {
+        if (!Array.isArray(data)) return
         setTurns(data)
         blocksRef.current = []
         setStreamingBlocks([])

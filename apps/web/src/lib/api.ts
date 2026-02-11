@@ -94,6 +94,18 @@ export const api = {
       }),
   },
 
+  settings: {
+    get: (key: string): Promise<Response> =>
+      authFetch(`${API_BASE}/api/settings/${encodeURIComponent(key)}`),
+
+    set: (key: string, value: string): Promise<Response> =>
+      authFetch(`${API_BASE}/api/settings/${encodeURIComponent(key)}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ value }),
+      }),
+  },
+
   eventsUrl: (id: string): string => {
     const token = getToken()
     const base = `${API_BASE}/api/sessions/${id}/events`

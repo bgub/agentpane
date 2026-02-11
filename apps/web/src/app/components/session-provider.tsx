@@ -1,8 +1,9 @@
 "use client"
 
-import { createContext, useContext, useState, useEffect, useCallback, type ReactNode } from "react"
+import { createContext, useContext, useState, useEffect, useCallback, useRef, type ReactNode } from "react"
 import { api, setToken } from "@/lib/api"
 import type { Session } from "@/lib/types"
+import type { InitialData } from "@/lib/server-api"
 
 interface SessionContextValue {
   sessions: Session[]
@@ -22,6 +23,7 @@ interface SessionContextValue {
   retryHealth: () => void
   onPromptingChange: (sessionId: string, prompting: boolean) => void
   onConnectionChange: (sessionId: string, connected: boolean, config?: { cwd: string; agent_type: string }) => void
+  consumeInitialConversation: (sessionId: string) => unknown[] | null
 }
 
 const SessionContext = createContext<SessionContextValue | null>(null)
@@ -32,14 +34,33 @@ export function useSession(): SessionContextValue {
   return ctx
 }
 
-export function SessionProvider({ children }: { children: ReactNode }) {
-  const [sessions, setSessions] = useState<Session[]>([])
-  const [activeSessionId, _setActiveSessionId] = useState<string | null>(null)
-  const [backendStatus, setBackendStatus] = useState<"checking" | "online" | "offline" | "unauthorized">("checking")
+export function SessionProvider({ children, initialData }: { children: ReactNode; initialData?: InitialData | null }) {
+  const [sessions, setSessions] = useState<Session[]>(initialData?.sessions ?? [])
+  const [activeSessionId, _setActiveSessionId] = useState<string | null>(
+    initialData?.sessions[0]?.id ?? null
+  )
+  const [backendStatus, setBackendStatus] = useState<"checking" | "online" | "offline" | "unauthorized">(
+    initialData ? "online" : "checking"
+  )
   const [healthChecking, setHealthChecking] = useState(false)
   const [showSetup, setShowSetup] = useState(false)
-  const [connectedSessionIds, setConnectedSessionIds] = useState<Set<string>>(new Set())
-  const [promptingSessionIds, setPromptingSessionIds] = useState<Set<string>>(new Set())
+  const [connectedSessionIds, setConnectedSessionIds] = useState<Set<string>>(
+    () => new Set(initialData?.sessions.filter((s) => s.connected).map((s) => s.id) ?? [])
+  )
+  const [promptingSessionIds, setPromptingSessionIds] = useState<Set<string>>(
+    () => new Set(initialData?.sessions.filter((s) => s.prompting).map((s) => s.id) ?? [])
+  )
+
+  const initialConversationsRef = useRef<Record<string, unknown[]>>(initialData?.conversations ?? {})
+
+  const consumeInitialConversation = useCallback((sessionId: string): unknown[] | null => {
+    const data = initialConversationsRef.current[sessionId]
+    if (data) {
+      delete initialConversationsRef.current[sessionId]
+      return data
+    }
+    return null
+  }, [])
 
   const setActiveSessionId = useCallback((id: string | null) => {
     _setActiveSessionId(id)
@@ -91,25 +112,37 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     return false
   }, [])
 
-  // Read auth token from URL on mount, store in localStorage, strip from URL
+  // Sync auth token on mount: URL token takes priority, then SSR token from initialData
   useEffect(() => {
     const params = new URLSearchParams(window.location.search)
-    const token = params.get("token")
-    if (token) {
-      setToken(token)
+    const urlToken = params.get("token")
+    if (urlToken) {
+      setToken(urlToken)
       params.delete("token")
       const qs = params.toString()
       const newUrl = qs ? `${window.location.pathname}?${qs}` : window.location.pathname
       window.history.replaceState({}, "", newUrl)
+    } else if (initialData?.authToken) {
+      setToken(initialData.authToken)
     }
-  }, [])
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Health check on mount, then load sessions if online
+  // When initialData is provided, data is already loaded — just restore active session from localStorage
   useEffect(() => {
+    if (initialData) {
+      const saved = localStorage.getItem("agentpane:activeSessionId")
+      if (saved && initialData.sessions.some((s) => s.id === saved)) {
+        _setActiveSessionId(saved)
+      } else if (initialData.sessions.length > 0) {
+        _setActiveSessionId(initialData.sessions[0].id)
+      }
+      return
+    }
     checkHealth().then((online) => {
       if (online) loadSessions()
     })
-  }, [checkHealth, loadSessions])
+  }, [initialData, checkHealth, loadSessions])
 
   // Poll: health check + status updates
   useEffect(() => {
@@ -260,6 +293,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     retryHealth,
     onPromptingChange,
     onConnectionChange,
+    consumeInitialConversation,
   }
 
   return (

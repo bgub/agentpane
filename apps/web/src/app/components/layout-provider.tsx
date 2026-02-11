@@ -3,9 +3,10 @@
 import { createContext, useContext, useState, useCallback, useEffect, useRef, type ReactNode } from "react"
 import type { Pane, LayoutState } from "@/lib/layout-types"
 import { useSession } from "./session-provider"
+import { api } from "@/lib/api"
 
-const STORAGE_KEY = "agentpane:layout"
-const OLD_STORAGE_KEY = "agentpane:activeSessionId"
+const OLD_LS_KEY = "agentpane:layout"
+const OLD_ACTIVE_KEY = "agentpane:activeSessionId"
 const MAX_PANES = 4
 
 interface LayoutContextValue {
@@ -34,8 +35,8 @@ function newPaneId(): string {
   return `pane-${Date.now()}-${++paneCounter}`
 }
 
-function makeDefaultLayout(sessionId?: string): LayoutState {
-  const id = newPaneId()
+function makeDefaultLayout(sessionId?: string, paneId?: string): LayoutState {
+  const id = paneId ?? newPaneId()
   return {
     panes: [{
       id,
@@ -47,75 +48,111 @@ function makeDefaultLayout(sessionId?: string): LayoutState {
   }
 }
 
-function loadLayout(sessionIds: Set<string>): LayoutState {
+function parseLayout(raw: string, sessionIds: Set<string>): LayoutState | null {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY)
-    if (raw) {
-      const parsed = JSON.parse(raw) as LayoutState
-      // Validate and prune stale session IDs
-      const panes = parsed.panes
-        .map((p) => {
-          const validTabs = p.tabSessionIds.filter((id) => sessionIds.has(id))
-          return {
-            ...p,
-            tabSessionIds: validTabs,
-            activeTabSessionId: validTabs.includes(p.activeTabSessionId)
-              ? p.activeTabSessionId
-              : validTabs[0] ?? "",
-          }
-        })
-        .filter((p) => p.tabSessionIds.length > 0)
+    const parsed = JSON.parse(raw) as LayoutState
+    if (!Array.isArray(parsed.panes)) return null
+    const panes = parsed.panes
+      .map((p) => {
+        const validTabs = p.tabSessionIds.filter((id: string) => sessionIds.has(id))
+        return {
+          ...p,
+          tabSessionIds: validTabs,
+          activeTabSessionId: validTabs.includes(p.activeTabSessionId)
+            ? p.activeTabSessionId
+            : validTabs[0] ?? "",
+        }
+      })
+      .filter((p: Pane) => p.tabSessionIds.length > 0)
 
-      if (panes.length > 0) {
-        const focusedPaneId = panes.some((p) => p.id === parsed.focusedPaneId)
-          ? parsed.focusedPaneId
-          : panes[0].id
-        const paneSizes = parsed.paneSizes.length === panes.length
-          ? parsed.paneSizes
-          : panes.map(() => 100 / panes.length)
-        return { panes, focusedPaneId, paneSizes }
-      }
+    if (panes.length > 0) {
+      const focusedPaneId = panes.some((p: Pane) => p.id === parsed.focusedPaneId)
+        ? parsed.focusedPaneId
+        : panes[0].id
+      const paneSizes = parsed.paneSizes?.length === panes.length
+        ? parsed.paneSizes
+        : panes.map(() => 100 / panes.length)
+      return { panes, focusedPaneId, paneSizes }
     }
   } catch { /* ignore */ }
+  return null
+}
 
-  // Migrate old activeSessionId key
-  try {
-    const oldId = localStorage.getItem(OLD_STORAGE_KEY)
-    if (oldId && sessionIds.has(oldId)) {
-      localStorage.removeItem(OLD_STORAGE_KEY)
-      return makeDefaultLayout(oldId)
-    }
-  } catch { /* ignore */ }
-
-  // Fallback: first session
-  const first = sessionIds.values().next().value
-  return makeDefaultLayout(first)
+function saveLayoutToBackend(layout: LayoutState) {
+  api.settings.set("layout", JSON.stringify(layout)).catch(() => {})
 }
 
 function evenSizes(count: number): number[] {
   return Array.from({ length: count }, () => 100 / count)
 }
 
-export function LayoutProvider({ children }: { children: ReactNode }) {
+export function LayoutProvider({ children, savedLayout }: { children: ReactNode; savedLayout?: string | null }) {
   const { sessions, activeSessionId, setActiveSession } = useSession()
   const sessionIds = new Set(sessions.map((s) => s.id))
-  const [initialized, setInitialized] = useState(false)
-  const [layout, setLayout] = useState<LayoutState>(() => makeDefaultLayout())
+
+  const didInitFromSaved = useRef(false)
+
+  const [layout, setLayout] = useState<LayoutState>(() => {
+    // Try saved layout from cookie (passed by server)
+    if (savedLayout && sessions.length > 0) {
+      const parsed = parseLayout(savedLayout, sessionIds)
+      if (parsed) {
+        didInitFromSaved.current = true
+        return parsed
+      }
+    }
+    // SSR default: connected sessions as tabs
+    if (sessions.length === 0) return makeDefaultLayout(undefined, "pane-default")
+    const connectedIds = sessions.filter((s) => s.connected).map((s) => s.id)
+    const tabIds = connectedIds.length > 0 ? connectedIds : [sessions[0].id]
+    return {
+      panes: [{
+        id: "pane-default",
+        tabSessionIds: tabIds,
+        activeTabSessionId: activeSessionId && tabIds.includes(activeSessionId) ? activeSessionId : tabIds[0],
+      }],
+      focusedPaneId: "pane-default",
+      paneSizes: [100],
+    }
+  })
+
+  const [initialized, setInitialized] = useState(didInitFromSaved.current)
   const saveTimerRef = useRef<ReturnType<typeof setTimeout>>(null)
 
-  // Initialize from localStorage once sessions load
+  // Client-side init: migrate from old localStorage if no cookie was loaded
   useEffect(() => {
     if (initialized || sessions.length === 0) return
-    setLayout(loadLayout(sessionIds))
+    try {
+      // Try old localStorage key
+      const raw = localStorage.getItem(OLD_LS_KEY)
+      if (raw) {
+        const parsed = parseLayout(raw, sessionIds)
+        if (parsed) {
+          setLayout(parsed)
+          saveLayoutToBackend(parsed)
+        }
+        localStorage.removeItem(OLD_LS_KEY)
+      }
+      // Try old activeSessionId key
+      const oldId = localStorage.getItem(OLD_ACTIVE_KEY)
+      if (oldId && sessionIds.has(oldId)) {
+        localStorage.removeItem(OLD_ACTIVE_KEY)
+        if (!raw) {
+          const fallback = makeDefaultLayout(oldId)
+          setLayout(fallback)
+          saveLayoutToBackend(fallback)
+        }
+      }
+    } catch { /* ignore */ }
     setInitialized(true)
   }, [sessions, initialized]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Debounced save to localStorage
+  // Debounced save to backend
   useEffect(() => {
     if (!initialized) return
     if (saveTimerRef.current) clearTimeout(saveTimerRef.current)
     saveTimerRef.current = setTimeout(() => {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(layout))
+      saveLayoutToBackend(layout)
     }, 500)
     return () => { if (saveTimerRef.current) clearTimeout(saveTimerRef.current) }
   }, [layout, initialized])

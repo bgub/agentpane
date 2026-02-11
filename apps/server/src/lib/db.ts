@@ -54,6 +54,12 @@ const migrations = Effect.gen(function* () {
   yield* sql`
     CREATE INDEX IF NOT EXISTS idx_message_blocks_turn ON message_blocks(turn_id, id)
   `
+  yield* sql`
+    CREATE TABLE IF NOT EXISTS settings (
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL
+    )
+  `
 })
 
 const dbPath = path.resolve(dataDir, "agentpane.db")
