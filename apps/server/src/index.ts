@@ -4,17 +4,39 @@ import { serve } from "@hono/node-server"
 import { execFile } from "node:child_process"
 import { sessionsRoutes } from "./routes/sessions.js"
 
+const ALLOWED_ORIGINS = ["https://agentpane.dev", "https://www.agentpane.dev"]
+
+function isAllowedOrigin(origin: string): boolean {
+  if (ALLOWED_ORIGINS.includes(origin)) return true
+  try {
+    const url = new URL(origin)
+    return url.hostname === "localhost" || url.hostname === "127.0.0.1"
+  } catch {
+    return false
+  }
+}
+
 const app = new Hono()
 
-// Private Network Access: must wrap CORS so the header lands on the preflight response
+// Private Network Access: only allow for approved origins
 app.use("*", async (c, next) => {
   await next()
-  if (c.req.header("Access-Control-Request-Private-Network") === "true") {
+  const origin = c.req.header("Origin")
+  if (
+    c.req.header("Access-Control-Request-Private-Network") === "true" &&
+    origin &&
+    isAllowedOrigin(origin)
+  ) {
     c.header("Access-Control-Allow-Private-Network", "true")
   }
 })
 
-app.use("*", cors({ origin: "*" }))
+app.use(
+  "*",
+  cors({
+    origin: (origin) => (isAllowedOrigin(origin) ? origin : ""),
+  })
+)
 
 app.get("/api/health", (c) => c.json({ app: "agentpane", status: "ok" }))
 

@@ -636,9 +636,13 @@ export class AcpClient extends Context.Tag("@agentpane/AcpClient")<
             })
             .finally(() => {
               conn.prompting = false
-              promptingSessions.delete(sessionId)
               conn.currentAssistantTurnId = null
               conn.accumulatedText = ""
+              // Only clean up the global set if this connection is still the active one —
+              // a reconnect may have already replaced it with a new connection.
+              if (connections.get(sessionId) === conn) {
+                promptingSessions.delete(sessionId)
+              }
             })
 
           return { userTurnId: userTurn.id, assistantTurnId: assistantTurn.id }
@@ -678,7 +682,13 @@ export class AcpClient extends Context.Tag("@agentpane/AcpClient")<
       const unsubscribe = (sessionId: string, subscriberId: string): Effect.Effect<void> =>
         Effect.sync(() => {
           const broadcaster = broadcasters.get(sessionId)
-          if (broadcaster) broadcaster.unsubscribe(subscriberId)
+          if (broadcaster) {
+            broadcaster.unsubscribe(subscriberId)
+            // If disconnected and no subscribers remain, schedule idle cleanup
+            if (!connections.has(sessionId) && broadcaster.subscriberCount === 0) {
+              scheduleIdleCleanup(sessionId)
+            }
+          }
         })
 
       const disconnect = (sessionId: string): Effect.Effect<void> =>
