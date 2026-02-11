@@ -1,11 +1,12 @@
 "use client"
 
-import { useState, useReducer, useRef, useEffect, useCallback } from "react"
+import { useState, useReducer, useRef, useEffect } from "react"
 import { Check, X, Loader2, Terminal, FileText, Search, Brain, Pencil } from "lucide-react"
 import { Streamdown } from "streamdown"
 import { code } from "@streamdown/code"
+import { useQueryClient } from "@tanstack/react-query"
+import { useConversationQuery, queryKeys } from "@/lib/queries"
 import { api } from "@/lib/api"
-import { useSession } from "./session-provider"
 
 interface TurnData {
   id: string
@@ -672,17 +673,16 @@ function applyEventToBlocks(
   return blocks
 }
 
-// --- Chat state reducer ---
+// --- Chat state reducer (streaming-only) ---
 
 interface ChatState {
-  turns: TurnData[]
   streamingBlocks: StreamingBlock[]
   prompting: boolean
+  optimisticTurn: TurnData | null
 }
 
 type ChatAction =
-  | { type: 'SET_TURNS'; turns: TurnData[] }
-  | { type: 'ADD_OPTIMISTIC_TURN'; turn: TurnData }
+  | { type: 'SET_OPTIMISTIC_TURN'; turn: TurnData }
   | { type: 'SSE_PROMPT_STARTED' }
   | { type: 'SSE_DONE' }
   | { type: 'SSE_STATUS'; prompting: boolean }
@@ -690,8 +690,7 @@ type ChatAction =
   | { type: 'SSE_DISCONNECTED' }
   | { type: 'SSE_STREAMING'; data: Record<string, unknown> }
   | { type: 'APPEND_ERROR'; message: string }
-  | { type: 'REFRESH'; turns: TurnData[] }
-  | { type: 'RESET'; turns?: TurnData[] }
+  | { type: 'RESET' }
 
 function appendError(blocks: StreamingBlock[], message: string): StreamingBlock[] {
   const last = blocks[blocks.length - 1]
@@ -701,16 +700,16 @@ function appendError(blocks: StreamingBlock[], message: string): StreamingBlock[
   return [...blocks, { type: "text", content: message }]
 }
 
+const INITIAL_CHAT_STATE: ChatState = { streamingBlocks: [], prompting: false, optimisticTurn: null }
+
 function chatReducer(state: ChatState, action: ChatAction): ChatState {
   switch (action.type) {
-    case 'SET_TURNS':
-      return { ...state, turns: action.turns }
-    case 'ADD_OPTIMISTIC_TURN':
-      return { ...state, turns: [...state.turns, action.turn] }
+    case 'SET_OPTIMISTIC_TURN':
+      return { ...state, optimisticTurn: action.turn }
     case 'SSE_PROMPT_STARTED':
       return { ...state, prompting: true, streamingBlocks: [] }
     case 'SSE_DONE':
-      return { ...state, prompting: false }
+      return { ...state, prompting: false, optimisticTurn: null, streamingBlocks: [] }
     case 'SSE_STATUS':
       return state.prompting === action.prompting ? state : { ...state, prompting: action.prompting }
     case 'SSE_ERROR':
@@ -721,10 +720,8 @@ function chatReducer(state: ChatState, action: ChatAction): ChatState {
       return { ...state, streamingBlocks: applyEventToBlocks(state.streamingBlocks, action.data) }
     case 'APPEND_ERROR':
       return { ...state, streamingBlocks: appendError(state.streamingBlocks, action.message) }
-    case 'REFRESH':
-      return { ...state, turns: action.turns, streamingBlocks: [] }
     case 'RESET':
-      return { turns: action.turns ?? [], streamingBlocks: [], prompting: false }
+      return INITIAL_CHAT_STATE
   }
 }
 
@@ -738,39 +735,32 @@ export default function ChatView({
   onConfigOptionsChange,
   onAvailableCommandsChange,
 }: ChatViewProps) {
-  const { consumeInitialConversation } = useSession()
-  const skipFetchRef = useRef(false)
-  const [{ turns, streamingBlocks, prompting }, dispatch] = useReducer(
+  const queryClient = useQueryClient()
+  const { data: queriedTurns = [] } = useConversationQuery(sessionId)
+  const turns = queriedTurns as TurnData[]
+
+  const [{ streamingBlocks, prompting, optimisticTurn }, dispatch] = useReducer(
     chatReducer,
-    sessionId,
-    (id) => {
-      const initial = consumeInitialConversation(id)
-      if (Array.isArray(initial)) {
-        skipFetchRef.current = true
-        return { turns: initial as TurnData[], streamingBlocks: [], prompting: false }
-      }
-      return { turns: [], streamingBlocks: [], prompting: false }
-    }
+    INITIAL_CHAT_STATE,
   )
 
   const scrollRef = useRef<HTMLDivElement>(null)
   const lastPromptTsRef = useRef(0)
   const lastErrorTsRef = useRef(0)
 
-  // Synchronous reset on session switch (clears before paint — no stale frame)
+  // Synchronous reset on session switch (clears streaming state before paint)
   const [prevSessionId, setPrevSessionId] = useState(sessionId)
   if (prevSessionId !== sessionId) {
     setPrevSessionId(sessionId)
-    const initial = consumeInitialConversation(sessionId)
-    if (Array.isArray(initial)) {
-      dispatch({ type: 'RESET', turns: initial as TurnData[] })
-      skipFetchRef.current = true
-    } else {
-      dispatch({ type: 'RESET' })
-    }
+    dispatch({ type: 'RESET' })
     lastPromptTsRef.current = lastSentPrompt?.ts ?? 0
     lastErrorTsRef.current = promptError?.ts ?? 0
   }
+
+  // Merge query turns + optimistic turn (if not yet in query data)
+  const allTurns = optimisticTurn && !turns.some((t) => t.id === optimisticTurn.id)
+    ? [...turns, optimisticTurn]
+    : turns
 
   const hasStreamingContent = streamingBlocks.length > 0
 
@@ -778,7 +768,7 @@ export default function ChatView({
   useEffect(() => {
     const el = scrollRef.current
     if (el) el.scrollTop = el.scrollHeight
-  }, [turns, streamingBlocks])
+  }, [allTurns, streamingBlocks])
 
   // Notify parent of prompting state
   useEffect(() => {
@@ -790,7 +780,7 @@ export default function ChatView({
     if (lastSentPrompt && lastSentPrompt.ts !== lastPromptTsRef.current) {
       lastPromptTsRef.current = lastSentPrompt.ts
       dispatch({
-        type: 'ADD_OPTIMISTIC_TURN',
+        type: 'SET_OPTIMISTIC_TURN',
         turn: {
           id: `temp-user-${lastSentPrompt.ts}`,
           session_id: sessionId,
@@ -817,39 +807,6 @@ export default function ChatView({
     }
   }, [promptError])
 
-  // Load conversation — skip if pre-fetched data was used
-  useEffect(() => {
-    if (skipFetchRef.current) {
-      skipFetchRef.current = false
-      return
-    }
-    let stale = false
-    api.sessions.conversation(sessionId)
-      .then((res) => {
-        if (!res.ok) return
-        return res.json()
-      })
-      .then((data: TurnData[] | undefined) => {
-        if (!stale && Array.isArray(data)) dispatch({ type: 'SET_TURNS', turns: data })
-      })
-      .catch(() => {})
-    return () => { stale = true }
-  }, [sessionId])
-
-  // Re-fetch conversation from DB
-  const refreshConversation = useCallback(() => {
-    api.sessions.conversation(sessionId)
-      .then((res) => {
-        if (!res.ok) throw new Error(`HTTP ${res.status}`)
-        return res.json()
-      })
-      .then((data: TurnData[]) => {
-        if (!Array.isArray(data)) return
-        dispatch({ type: 'REFRESH', turns: data })
-      })
-      .catch(() => {})
-  }, [sessionId])
-
   // EventSource for SSE events
   useEffect(() => {
     const es = new EventSource(api.eventsUrl(sessionId))
@@ -873,7 +830,7 @@ export default function ChatView({
           dispatch({ type: 'SSE_PROMPT_STARTED' })
         } else if (eventType === "done") {
           dispatch({ type: 'SSE_DONE' })
-          refreshConversation()
+          queryClient.invalidateQueries({ queryKey: queryKeys.conversation(sessionId) })
         } else if (eventType === "error") {
           dispatch({ type: 'SSE_ERROR', message: `Error: ${data.message}` })
         } else if (eventType === "disconnected") {
@@ -894,12 +851,12 @@ export default function ChatView({
     }
 
     return () => es.close()
-  }, [sessionId, refreshConversation, onConnectionChange, onConfigOptionsChange, onAvailableCommandsChange])
+  }, [sessionId, queryClient, onConnectionChange, onConfigOptionsChange, onAvailableCommandsChange])
 
   return (
     <div ref={scrollRef} className="h-full overflow-y-auto">
       <div className="max-w-3xl mx-auto px-5 py-6 space-y-1">
-        {turns.map((turn) => (
+        {allTurns.map((turn) => (
           <div key={turn.id}>
             {turn.role === "user" ? (
               <div className="mt-5 mb-3 -mx-3 px-3 py-2.5 rounded-lg bg-[var(--t-elevated)]">

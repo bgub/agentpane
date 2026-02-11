@@ -1,4 +1,5 @@
 import { SessionProvider } from "./components/session-provider"
+import { QueryProvider } from "./components/query-provider"
 import { LayoutProvider } from "./components/layout-provider"
 import Sidebar from "./components/sidebar"
 import { PaneContainer } from "./components/pane-container"
@@ -11,12 +12,14 @@ export default async function Home() {
 
   return (
     <div className="flex h-screen bg-[var(--t-bg)] overflow-hidden">
-      <SessionProvider initialData={initialData}>
-        <LayoutProvider savedLayout={initialData?.layout ?? null}>
-          <Sidebar />
-          <PaneContainer />
-        </LayoutProvider>
-      </SessionProvider>
+      <QueryProvider initialData={initialData}>
+        <SessionProvider initialData={initialData}>
+          <LayoutProvider savedLayout={initialData?.layout ?? null}>
+            <Sidebar />
+            <PaneContainer />
+          </LayoutProvider>
+        </SessionProvider>
+      </QueryProvider>
     </div>
   )
 }

@@ -1,7 +1,9 @@
 "use client"
 
-import { createContext, useContext, useState, useEffect, useCallback, useRef, type ReactNode } from "react"
+import { createContext, useContext, useState, useEffect, useCallback, type ReactNode } from "react"
+import { useQueryClient } from "@tanstack/react-query"
 import { api, setToken } from "@/lib/api"
+import { useSessionsQuery, useStartSessionMutation, useDeleteSessionMutation, useRenameSessionMutation, queryKeys } from "@/lib/queries"
 import type { Session } from "@/lib/types"
 import type { InitialData } from "@/lib/server-api"
 
@@ -23,7 +25,6 @@ interface SessionContextValue {
   retryHealth: () => void
   onPromptingChange: (sessionId: string, prompting: boolean) => void
   onConnectionChange: (sessionId: string, connected: boolean, config?: { cwd: string; agent_type: string }) => void
-  consumeInitialConversation: (sessionId: string) => unknown[] | null
 }
 
 const SessionContext = createContext<SessionContextValue | null>(null)
@@ -35,7 +36,9 @@ export function useSession(): SessionContextValue {
 }
 
 export function SessionProvider({ children, initialData }: { children: ReactNode; initialData?: InitialData | null }) {
-  const [sessions, setSessions] = useState<Session[]>(initialData?.sessions ?? [])
+  const queryClient = useQueryClient()
+  const { data: sessions = [] } = useSessionsQuery()
+
   const [activeSessionId, _setActiveSessionId] = useState<string | null>(
     initialData?.sessions[0]?.id ?? null
   )
@@ -51,50 +54,14 @@ export function SessionProvider({ children, initialData }: { children: ReactNode
     () => new Set(initialData?.sessions.filter((s) => s.prompting).map((s) => s.id) ?? [])
   )
 
-  const initialConversationsRef = useRef<Record<string, unknown[]>>(initialData?.conversations ?? {})
-
-  const consumeInitialConversation = useCallback((sessionId: string): unknown[] | null => {
-    const data = initialConversationsRef.current[sessionId]
-    if (data) {
-      delete initialConversationsRef.current[sessionId]
-      return data
-    }
-    return null
-  }, [])
+  const startSessionMutation = useStartSessionMutation()
+  const deleteSessionMutation = useDeleteSessionMutation()
+  const renameSessionMutation = useRenameSessionMutation()
 
   const setActiveSessionId = useCallback((id: string | null) => {
     _setActiveSessionId(id)
     if (id) localStorage.setItem("agentpane:activeSessionId", id)
     else localStorage.removeItem("agentpane:activeSessionId")
-  }, [])
-
-  const loadSessions = useCallback(() => {
-    api.sessions.list()
-      .then((res) => {
-        if (res.status === 401) {
-          setToken(null)
-          setBackendStatus("unauthorized")
-          return
-        }
-        if (!res.ok) throw new Error(`HTTP ${res.status}`)
-        return res.json()
-      })
-      .then((data: Session[] | undefined) => {
-        if (!data) return
-        setSessions(data)
-        setConnectedSessionIds(new Set(data.filter((s) => s.connected).map((s) => s.id)))
-        setPromptingSessionIds(new Set(data.filter((s) => s.prompting).map((s) => s.id)))
-
-        const saved = localStorage.getItem("agentpane:activeSessionId")
-        if (saved && data.some((s) => s.id === saved)) {
-          _setActiveSessionId(saved)
-        } else if (data.length > 0) {
-          _setActiveSessionId(data[0].id)
-        }
-
-        setBackendStatus("online")
-      })
-      .catch(() => setBackendStatus("online"))
   }, [])
 
   const checkHealth = useCallback(async () => {
@@ -127,7 +94,7 @@ export function SessionProvider({ children, initialData }: { children: ReactNode
     }
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Health check on mount, then load sessions if online
+  // Health check on mount, then trigger session refetch if online
   // When initialData is provided, data is already loaded — just restore active session from localStorage
   useEffect(() => {
     if (initialData) {
@@ -140,9 +107,27 @@ export function SessionProvider({ children, initialData }: { children: ReactNode
       return
     }
     checkHealth().then((online) => {
-      if (online) loadSessions()
+      if (online) {
+        queryClient.invalidateQueries({ queryKey: queryKeys.sessions })
+      }
     })
-  }, [initialData, checkHealth, loadSessions])
+  }, [initialData, checkHealth, queryClient])
+
+  // When sessions query data arrives from a refetch, sync connected/prompting/activeSessionId
+  useEffect(() => {
+    if (sessions.length === 0) return
+    setConnectedSessionIds(new Set(sessions.filter((s) => s.connected).map((s) => s.id)))
+    setPromptingSessionIds(new Set(sessions.filter((s) => s.prompting).map((s) => s.id)))
+
+    // Restore active session from localStorage if needed
+    _setActiveSessionId((prev) => {
+      if (prev && sessions.some((s) => s.id === prev)) return prev
+      const saved = localStorage.getItem("agentpane:activeSessionId")
+      if (saved && sessions.some((s) => s.id === saved)) return saved
+      return sessions[0]?.id ?? null
+    })
+    setBackendStatus("online")
+  }, [sessions])
 
   // Poll: health check only (connected/prompting state driven by SSE events)
   useEffect(() => {
@@ -154,14 +139,14 @@ export function SessionProvider({ children, initialData }: { children: ReactNode
         if (data?.app !== "agentpane") throw new Error()
 
         if (backendStatus === "offline" || backendStatus === "unauthorized") {
-          loadSessions()
+          queryClient.invalidateQueries({ queryKey: queryKeys.sessions })
         }
       } catch {
         setBackendStatus("offline")
       }
     }, 5000)
     return () => clearInterval(interval)
-  }, [backendStatus, loadSessions])
+  }, [backendStatus, queryClient])
 
   const createSession = useCallback(() => {
     setShowSetup(true)
@@ -170,17 +155,14 @@ export function SessionProvider({ children, initialData }: { children: ReactNode
 
   const startSession = useCallback(
     async (agentType: string, cwd: string) => {
-      const res = await api.sessions.create({ agent_type: agentType, cwd })
-      const session: Session = await res.json()
-
-      setSessions((prev) => [...prev, session])
+      const session = await startSessionMutation.mutateAsync({ agentType, cwd })
       setActiveSessionId(session.id)
       if (session.connected) {
         setConnectedSessionIds((prev) => new Set([...prev, session.id]))
       }
       setShowSetup(false)
     },
-    [setActiveSessionId]
+    [setActiveSessionId, startSessionMutation]
   )
 
   const cancelSetup = useCallback(() => {
@@ -196,8 +178,7 @@ export function SessionProvider({ children, initialData }: { children: ReactNode
   }, [sessions])
 
   const deleteSession = useCallback(async (id: string) => {
-    await api.sessions.delete(id)
-    setSessions((prev) => prev.filter((s) => s.id !== id))
+    await deleteSessionMutation.mutateAsync(id)
     setConnectedSessionIds((prev) => {
       const next = new Set(prev)
       next.delete(id)
@@ -208,19 +189,17 @@ export function SessionProvider({ children, initialData }: { children: ReactNode
       next.delete(id)
       return next
     })
-  }, [])
+  }, [deleteSessionMutation])
 
   const renameSession = useCallback(async (id: string, name: string) => {
-    const res = await api.sessions.rename(id, name)
-    const updated: Session = await res.json()
-    setSessions((prev) => prev.map((s) => (s.id === id ? { ...s, ...updated } : s)))
-  }, [])
+    await renameSessionMutation.mutateAsync({ id, name })
+  }, [renameSessionMutation])
 
   const retryHealth = useCallback(() => {
     checkHealth().then((online) => {
-      if (online) loadSessions()
+      if (online) queryClient.invalidateQueries({ queryKey: queryKeys.sessions })
     })
-  }, [checkHealth, loadSessions])
+  }, [checkHealth, queryClient])
 
   const onPromptingChange = useCallback(
     (sessionId: string, prompting: boolean) => {
@@ -243,14 +222,14 @@ export function SessionProvider({ children, initialData }: { children: ReactNode
         return next
       })
       if (config) {
-        setSessions((prev) =>
-          prev.map((s) =>
+        queryClient.setQueryData<Session[]>(queryKeys.sessions, (old) =>
+          old?.map((s) =>
             s.id === sessionId ? { ...s, cwd: config.cwd, agent_type: config.agent_type } : s
           )
         )
       }
     },
-    []
+    [queryClient]
   )
 
   const setActiveSession = useCallback((id: string) => {
@@ -275,7 +254,6 @@ export function SessionProvider({ children, initialData }: { children: ReactNode
     retryHealth,
     onPromptingChange,
     onConnectionChange,
-    consumeInitialConversation,
   }
 
   return (

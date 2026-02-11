@@ -1,8 +1,7 @@
 "use client"
 
-import { useState, useEffect } from "react"
 import { GitBranch, Loader2, Plug, Unplug } from "lucide-react"
-import { api } from "@/lib/api"
+import { useGitBranchQuery } from "@/lib/queries"
 import type { ConfigOption, ConfigSelectGroup } from "./chat-view"
 
 interface ChatHeaderProps {
@@ -21,21 +20,7 @@ function isGroup(opt: ConfigOption["options"][number]): opt is ConfigSelectGroup
 }
 
 export function ChatHeader({ cwd, connected, prompting, connecting, configOptions, onConnect, onDisconnect, onSetConfigOption }: ChatHeaderProps) {
-  const [branch, setBranch] = useState<string | null>(null)
-
-  useEffect(() => {
-    if (!cwd) { setBranch(null); return }
-    let stale = false
-    api.gitBranch(cwd)
-      .then((res) => res.json())
-      .then((data: { branch: string | null }) => {
-        if (!stale) setBranch(data.branch)
-      })
-      .catch(() => {
-        if (!stale) setBranch(null)
-      })
-    return () => { stale = true }
-  }, [cwd])
+  const { data: branch } = useGitBranchQuery(cwd)
 
   return (
     <div className="flex h-10 shrink-0 items-center justify-between px-4 bg-[var(--t-surface)] border-b border-[var(--t-border)]">
