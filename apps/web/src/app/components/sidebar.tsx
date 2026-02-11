@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useRef, useEffect, Fragment, type KeyboardEvent } from "react"
+import { useState, useRef, useEffect, Fragment, type KeyboardEvent, type DragEvent } from "react"
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -11,21 +11,22 @@ import { EllipsisVertical, Loader2, Plus, Sun, Moon, Monitor } from "lucide-reac
 import { useTheme } from "next-themes"
 import { PROVIDER_INFO } from "./providers"
 import { useSession } from "./session-provider"
+import { useLayout } from "./layout-provider"
 import type { Session } from "@/lib/types"
 
 export default function Sidebar() {
   const {
     sessions,
-    activeSessionId,
     connectedSessionIds,
     promptingSessionIds,
     showSetup,
     backendStatus,
-    setActiveSession,
     createSession,
     deleteSession,
     renameSession,
   } = useSession()
+
+  const { layout, openSessionInFocusedPane } = useLayout()
 
   const { theme, setTheme, resolvedTheme } = useTheme()
   const [mounted, setMounted] = useState(false)
@@ -89,18 +90,29 @@ export default function Sidebar() {
   }
 
   const renderSession = (session: Session, isHistory: boolean) => {
-    const isActive = session.id === activeSessionId && !showSetup
+    const isOpenInAnyPane = layout.panes.some((p) => p.tabSessionIds.includes(session.id))
+    const focusedPane = layout.panes.find((p) => p.id === layout.focusedPaneId)
+    const isActive = focusedPane?.activeTabSessionId === session.id && !showSetup
+
+    const handleDragStart = (e: DragEvent) => {
+      e.dataTransfer.setData("application/x-sidebar-session", JSON.stringify({ sessionId: session.id }))
+      e.dataTransfer.effectAllowed = "copyMove"
+    }
 
     return (
       <div
         key={session.id}
-        onClick={() => setActiveSession(session.id)}
+        draggable={editingId !== session.id}
+        onDragStart={handleDragStart}
+        onClick={() => openSessionInFocusedPane(session.id)}
         className={`group flex items-center gap-2.5 px-3 py-2 cursor-pointer text-[13px] transition-colors ${
           isActive
             ? "bg-[var(--t-elevated)] text-[var(--t-white)] border-l-2 border-l-[var(--t-accent)]"
-            : isHistory
-              ? "text-[var(--t-muted)] hover:bg-[var(--t-bg)] hover:text-[var(--t-text)] border-l-2 border-l-transparent"
-              : "text-[var(--t-text)] hover:bg-[var(--t-bg)] hover:text-[var(--t-bright)] border-l-2 border-l-transparent"
+            : isOpenInAnyPane
+              ? "bg-[var(--t-bg)]/50 text-[var(--t-text)] hover:bg-[var(--t-bg)] hover:text-[var(--t-bright)] border-l-2 border-l-[var(--t-dim)]"
+              : isHistory
+                ? "text-[var(--t-muted)] hover:bg-[var(--t-bg)] hover:text-[var(--t-text)] border-l-2 border-l-transparent"
+                : "text-[var(--t-text)] hover:bg-[var(--t-bg)] hover:text-[var(--t-bright)] border-l-2 border-l-transparent"
         }`}
       >
         {editingId === session.id ? (

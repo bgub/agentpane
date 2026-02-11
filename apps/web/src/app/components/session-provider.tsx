@@ -182,13 +182,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
 
   const deleteSession = useCallback(async (id: string) => {
     await api.sessions.delete(id)
-    setSessions((prev) => {
-      const remaining = prev.filter((s) => s.id !== id)
-      if (activeSessionId === id) {
-        setActiveSessionId(remaining.length > 0 ? remaining[0].id : null)
-      }
-      return remaining
-    })
+    setSessions((prev) => prev.filter((s) => s.id !== id))
     setConnectedSessionIds((prev) => {
       const next = new Set(prev)
       next.delete(id)
@@ -199,7 +193,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       next.delete(id)
       return next
     })
-  }, [activeSessionId, setActiveSessionId])
+  }, [])
 
   const renameSession = useCallback(async (id: string, name: string) => {
     const res = await api.sessions.rename(id, name)

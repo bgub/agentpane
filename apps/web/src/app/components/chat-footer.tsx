@@ -13,9 +13,10 @@ interface ChatFooterProps {
   availableCommands: AvailableCommand[]
   onSend: (text: string) => void
   onCancel: () => void
+  autoFocus?: boolean
 }
 
-export function ChatFooter({ sessionId, active, prompting, connecting, connected, availableCommands, onSend, onCancel }: ChatFooterProps) {
+export function ChatFooter({ sessionId, active, prompting, connecting, connected, availableCommands, onSend, onCancel, autoFocus = true }: ChatFooterProps) {
   const [input, setInput] = useState("")
   const [selectedIndex, setSelectedIndex] = useState(0)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
@@ -45,14 +46,14 @@ export function ChatFooter({ sessionId, active, prompting, connecting, connected
     if (textareaRef.current) textareaRef.current.style.height = "auto"
   }, [sessionId])
 
-  // Focus textarea when ready
+  // Focus textarea when ready (only in focused pane)
   useEffect(() => {
-    if (active && !prompting && !connecting) textareaRef.current?.focus()
-  }, [active, prompting, connecting])
+    if (autoFocus && active && !prompting && !connecting) textareaRef.current?.focus()
+  }, [autoFocus, active, prompting, connecting])
 
-  // Global keydown to focus textarea
+  // Global keydown to focus textarea (only in focused pane)
   useEffect(() => {
-    if (!active) return
+    if (!autoFocus || !active) return
     const handleGlobalKeyDown = (e: globalThis.KeyboardEvent) => {
       if (
         e.target instanceof HTMLInputElement ||
@@ -63,7 +64,7 @@ export function ChatFooter({ sessionId, active, prompting, connecting, connected
     }
     window.addEventListener("keydown", handleGlobalKeyDown)
     return () => window.removeEventListener("keydown", handleGlobalKeyDown)
-  }, [active])
+  }, [autoFocus, active])
 
   const selectCommand = useCallback((cmd: AvailableCommand) => {
     setInput(`/${cmd.name} `)
