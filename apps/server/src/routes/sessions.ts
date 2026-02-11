@@ -70,7 +70,14 @@ app.post("/", async (c) => {
       // If agent_type provided, await connection (atomic create+connect)
       let connected = false
       if (body.agent_type) {
-        yield* acp.connect(session.id, cwd, session.agent_type)
+        yield* acp.connect(session.id, cwd, session.agent_type).pipe(
+          Effect.tapError(() =>
+            Effect.gen(function* () {
+              acp.removeBroadcaster(session.id)
+              yield* repo.remove(session.id)
+            }).pipe(Effect.ignore)
+          )
+        )
         connected = true
       }
 

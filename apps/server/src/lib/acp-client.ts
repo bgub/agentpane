@@ -207,8 +207,11 @@ export class AcpClient extends Context.Tag("@agentpane/AcpClient")<
 
         // Update DB
         runPromise(
-          repo.updateAgentSessionId(sessionId, null).pipe(Effect.orDie)
-        ).catch(() => {})
+          repo.updateAgentSessionId(sessionId, null).pipe(
+            Effect.tapError((err) => Effect.logWarning(`Failed to clear agent_session_id for session ${sessionId}: ${err}`)),
+            Effect.ignore
+          )
+        )
 
         // Broadcaster survives disconnects but schedule idle cleanup
         scheduleIdleCleanup(sessionId)
@@ -244,8 +247,11 @@ export class AcpClient extends Context.Tag("@agentpane/AcpClient")<
                   conn.currentAssistantTurnId,
                   eventType,
                   JSON.stringify(update)
+                ).pipe(
+                  Effect.tapError((err) => Effect.logWarning(`Failed to persist ${eventType} block: ${err}`)),
+                  Effect.ignore
                 )
-              ).catch(() => {})
+              )
             }
 
             // Keep stored configOptions in sync when agent pushes updates
@@ -599,14 +605,13 @@ export class AcpClient extends Context.Tag("@agentpane/AcpClient")<
           const persistCompletion = (stopReason: string) =>
             Effect.gen(function* () {
               if (conn.accumulatedText) {
-                yield* repo
-                  .addMessageBlock(assistantTurn.id, "text", conn.accumulatedText)
-                  .pipe(Effect.orDie)
+                yield* repo.addMessageBlock(assistantTurn.id, "text", conn.accumulatedText)
               }
-              yield* repo
-                .completeTurn(assistantTurn.id, stopReason)
-                .pipe(Effect.orDie)
-            })
+              yield* repo.completeTurn(assistantTurn.id, stopReason)
+            }).pipe(
+              Effect.tapError((err) => Effect.logWarning(`Failed to persist completion for session ${sessionId}: ${err}`)),
+              Effect.ignore
+            )
 
           conn.connection
             .prompt({
@@ -618,20 +623,14 @@ export class AcpClient extends Context.Tag("@agentpane/AcpClient")<
               await runPromise(persistCompletion(reason))
               const b = broadcasters.get(sessionId)
               if (b) {
-                b.broadcast({
-                  sessionUpdate: "done",
-                  stopReason: reason,
-                })
+                b.broadcast({ sessionUpdate: "done", stopReason: reason })
               }
             })
             .catch(async (err) => {
-              await runPromise(persistCompletion("error")).catch(() => {})
+              await runPromise(persistCompletion("error"))
               const b = broadcasters.get(sessionId)
               if (b) {
-                b.broadcast({
-                  sessionUpdate: "error",
-                  message: String(err),
-                })
+                b.broadcast({ sessionUpdate: "error", message: String(err) })
               }
             })
             .finally(() => {

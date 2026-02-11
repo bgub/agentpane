@@ -3,6 +3,7 @@
 import { useState, useCallback, useEffect, useRef } from "react"
 import { useSession } from "./session-provider"
 import { BackendOfflineScreen } from "./backend-offline-screen"
+import { BackendUnauthorizedScreen } from "./backend-unauthorized-screen"
 import { SessionSetupScreen } from "./session-setup-screen"
 import { ChatHeader } from "./chat-header"
 import { ChatFooter } from "./chat-footer"
@@ -40,7 +41,7 @@ export function MainPanel() {
   const activeSession = sessions.find((s) => s.id === activeSessionId)
   const connected = activeSession ? connectedSessionIds.has(activeSession.id) : false
   const prompting = activeSession ? promptingSessionIds.has(activeSession.id) : false
-  const hasChat = !!activeSession && !showSetup && backendStatus !== "offline"
+  const hasChat = !!activeSession && !showSetup && backendStatus === "online"
 
   const connectAgent = useCallback(async () => {
     if (!activeSession || connecting) return
@@ -154,6 +155,8 @@ export function MainPanel() {
       <div className="flex-1 min-h-0 relative">
         {backendStatus === "offline" ? (
           <BackendOfflineScreen />
+        ) : backendStatus === "unauthorized" ? (
+          <BackendUnauthorizedScreen />
         ) : showSetup ? (
           <SessionSetupScreen />
         ) : activeSession ? (

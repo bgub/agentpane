@@ -1,7 +1,7 @@
 "use client"
 
 import { createContext, useContext, useState, useEffect, useCallback, type ReactNode } from "react"
-import { api } from "@/lib/api"
+import { api, setToken } from "@/lib/api"
 import type { Session } from "@/lib/types"
 
 interface SessionContextValue {
@@ -9,7 +9,7 @@ interface SessionContextValue {
   activeSessionId: string | null
   connectedSessionIds: Set<string>
   promptingSessionIds: Set<string>
-  backendStatus: "checking" | "online" | "offline"
+  backendStatus: "checking" | "online" | "offline" | "unauthorized"
   healthChecking: boolean
   showSetup: boolean
 
@@ -35,7 +35,7 @@ export function useSession(): SessionContextValue {
 export function SessionProvider({ children }: { children: ReactNode }) {
   const [sessions, setSessions] = useState<Session[]>([])
   const [activeSessionId, _setActiveSessionId] = useState<string | null>(null)
-  const [backendStatus, setBackendStatus] = useState<"checking" | "online" | "offline">("checking")
+  const [backendStatus, setBackendStatus] = useState<"checking" | "online" | "offline" | "unauthorized">("checking")
   const [healthChecking, setHealthChecking] = useState(false)
   const [showSetup, setShowSetup] = useState(false)
   const [connectedSessionIds, setConnectedSessionIds] = useState<Set<string>>(new Set())
@@ -49,8 +49,17 @@ export function SessionProvider({ children }: { children: ReactNode }) {
 
   const loadSessions = useCallback(() => {
     api.sessions.list()
-      .then((res) => res.json())
-      .then((data: Session[]) => {
+      .then((res) => {
+        if (res.status === 401) {
+          setToken(null)
+          setBackendStatus("unauthorized")
+          return
+        }
+        if (!res.ok) throw new Error(`HTTP ${res.status}`)
+        return res.json()
+      })
+      .then((data: Session[] | undefined) => {
+        if (!data) return
         setSessions(data)
         setConnectedSessionIds(new Set(data.filter((s) => s.connected).map((s) => s.id)))
         setPromptingSessionIds(new Set(data.filter((s) => s.prompting).map((s) => s.id)))
@@ -82,6 +91,19 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     return false
   }, [])
 
+  // Read auth token from URL on mount, store in localStorage, strip from URL
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search)
+    const token = params.get("token")
+    if (token) {
+      setToken(token)
+      params.delete("token")
+      const qs = params.toString()
+      const newUrl = qs ? `${window.location.pathname}?${qs}` : window.location.pathname
+      window.history.replaceState({}, "", newUrl)
+    }
+  }, [])
+
   // Health check on mount, then load sessions if online
   useEffect(() => {
     checkHealth().then((online) => {
@@ -98,14 +120,23 @@ export function SessionProvider({ children }: { children: ReactNode }) {
         const data = await res.json()
         if (data?.app !== "agentpane") throw new Error()
 
-        if (backendStatus === "offline") {
+        if (backendStatus === "offline" || backendStatus === "unauthorized") {
           loadSessions()
         }
 
         // Update status while online
         api.sessions.status()
-          .then((res) => res.json())
-          .then((data: { connected: string[]; prompting: string[] }) => {
+          .then((res) => {
+            if (res.status === 401) {
+              setToken(null)
+              setBackendStatus("unauthorized")
+              return
+            }
+            if (!res.ok) return
+            return res.json()
+          })
+          .then((data: { connected: string[]; prompting: string[] } | undefined) => {
+            if (!data) return
             setConnectedSessionIds(new Set(data.connected))
             setPromptingSessionIds(new Set(data.prompting))
           })

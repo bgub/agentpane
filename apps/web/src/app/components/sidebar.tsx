@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useRef, useEffect, type KeyboardEvent } from "react"
+import { useState, useRef, useEffect, Fragment, type KeyboardEvent } from "react"
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -187,7 +187,9 @@ export default function Sidebar() {
       <ScrollArea className="flex-1">
         <div className="py-1">
           {/* Active sessions */}
-          {activeSessions.map((session) => renderSession(session, false))}
+          {activeSessions.map((session) => (
+            <Fragment key={session.id}>{renderSession(session, false)}</Fragment>
+          ))}
 
           {/* History divider */}
           {historySessions.length > 0 && (
@@ -200,7 +202,9 @@ export default function Sidebar() {
                   History
                 </span>
               </div>
-              {historySessions.map((session) => renderSession(session, true))}
+              {historySessions.map((session) => (
+                <Fragment key={session.id}>{renderSession(session, true)}</Fragment>
+              ))}
             </>
           )}
         </div>
