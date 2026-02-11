@@ -1,146 +1,24 @@
 "use client"
 
-import { useState, useCallback, useEffect, useRef, type DragEvent } from "react"
-import { useSession } from "./session-provider"
+import { type DragEvent } from "react"
 import { useLayout } from "./layout-provider"
 import { TabBar } from "./tab-bar"
 import { ChatHeader } from "./chat-header"
 import { ChatFooter } from "./chat-footer"
-import ChatView, { type ConfigOption, type AvailableCommand } from "./chat-view"
-import { api } from "@/lib/api"
+import ChatView from "./chat-view"
+import { usePaneSession } from "./use-pane-session"
 
 interface PaneViewProps {
   paneId: string
 }
 
 export function PaneView({ paneId }: PaneViewProps) {
-  const {
-    sessions,
-    connectedSessionIds,
-    promptingSessionIds,
-    onPromptingChange,
-    onConnectionChange,
-  } = useSession()
-
   const { layout, focusPane, openSessionInPane } = useLayout()
   const pane = layout.panes.find((p) => p.id === paneId)
   const isFocused = layout.focusedPaneId === paneId
   const activeTabSessionId = pane?.activeTabSessionId ?? ""
-  const activeSession = sessions.find((s) => s.id === activeTabSessionId)
 
-  const [connecting, setConnecting] = useState(false)
-  const [lastSentPrompt, setLastSentPrompt] = useState<{ text: string; ts: number } | null>(null)
-  const [promptError, setPromptError] = useState<{ message: string; ts: number } | null>(null)
-  const [configOptions, setConfigOptions] = useState<ConfigOption[]>([])
-  const [availableCommands, setAvailableCommands] = useState<AvailableCommand[]>([])
-  const configOptionsRef = useRef(configOptions)
-  configOptionsRef.current = configOptions
-
-  // Clear per-session transient state when active tab changes
-  useEffect(() => {
-    setConnecting(false)
-    setLastSentPrompt(null)
-    setPromptError(null)
-    setConfigOptions([])
-    setAvailableCommands([])
-  }, [activeTabSessionId])
-
-  const connected = activeSession ? connectedSessionIds.has(activeSession.id) : false
-  const prompting = activeSession ? promptingSessionIds.has(activeSession.id) : false
-  const hasChat = !!activeSession
-
-  const connectAgent = useCallback(async () => {
-    if (!activeSession || connecting) return
-    setConnecting(true)
-    try {
-      const res = await api.sessions.connect(activeSession.id, {
-        agent_type: activeSession.agent_type,
-        cwd: activeSession.cwd,
-      })
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({ error: "Connection failed" }))
-        setPromptError({ message: `Error: ${err.error}`, ts: Date.now() })
-      }
-    } catch {
-      setPromptError({ message: "Error: Failed to connect agent", ts: Date.now() })
-    } finally {
-      setConnecting(false)
-    }
-  }, [activeSession, connecting])
-
-  const disconnectAgent = useCallback(async () => {
-    if (!activeSession) return
-    await api.sessions.disconnect(activeSession.id).catch(() => {})
-  }, [activeSession])
-
-  const handleConfigOptionsChange = useCallback((opts: ConfigOption[]) => {
-    setConfigOptions(opts)
-  }, [])
-
-  const handleAvailableCommandsChange = useCallback((cmds: AvailableCommand[]) => {
-    setAvailableCommands(cmds)
-  }, [])
-
-  const handleSetConfigOption = useCallback(async (configId: string, value: string) => {
-    if (!activeSession) return
-    const prev = configOptionsRef.current
-    setConfigOptions(prev.map((opt) =>
-      opt.id === configId ? { ...opt, currentValue: value } : opt
-    ))
-    try {
-      const res = await api.sessions.setConfig(activeSession.id, configId, value)
-      if (res.ok) {
-        const updated = await res.json() as ConfigOption[]
-        setConfigOptions(updated)
-      } else {
-        setConfigOptions(prev)
-      }
-    } catch {
-      setConfigOptions(prev)
-    }
-  }, [activeSession])
-
-  const cancelPrompt = useCallback(() => {
-    if (!activeSession) return
-    api.sessions.cancel(activeSession.id).catch(() => {})
-  }, [activeSession])
-
-  const sendPrompt = useCallback(async (text: string) => {
-    if (!activeSession || prompting) return
-
-    setLastSentPrompt({ text, ts: Date.now() })
-
-    if (!connected) {
-      setConnecting(true)
-      try {
-        const res = await api.sessions.connect(activeSession.id, {
-          agent_type: activeSession.agent_type,
-          cwd: activeSession.cwd,
-        })
-        if (!res.ok) {
-          const err = await res.json().catch(() => ({ error: "Connection failed" }))
-          setPromptError({ message: `Error: ${err.error}`, ts: Date.now() })
-          setConnecting(false)
-          return
-        }
-      } catch {
-        setPromptError({ message: "Error: Failed to reconnect agent", ts: Date.now() })
-        setConnecting(false)
-        return
-      }
-      setConnecting(false)
-    }
-
-    try {
-      const res = await api.sessions.prompt(activeSession.id, text)
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({ error: "Unknown error" }))
-        setPromptError({ message: `Error: ${err.error}`, ts: Date.now() })
-      }
-    } catch {
-      setPromptError({ message: "Error: Network error", ts: Date.now() })
-    }
-  }, [activeSession, prompting, connected])
+  const ps = usePaneSession(activeTabSessionId || undefined)
 
   const handlePaneDragOver = (e: DragEvent) => {
     if (!e.dataTransfer.types.includes("application/x-sidebar-session")) return
@@ -173,27 +51,27 @@ export function PaneView({ paneId }: PaneViewProps) {
       />
 
       <ChatHeader
-        cwd={hasChat ? activeSession?.cwd : undefined}
-        connected={connected}
-        prompting={prompting}
-        connecting={connecting}
-        configOptions={configOptions}
-        onConnect={connectAgent}
-        onDisconnect={disconnectAgent}
-        onSetConfigOption={handleSetConfigOption}
+        cwd={ps.activeSession?.cwd}
+        connected={ps.connected}
+        prompting={ps.prompting}
+        connecting={ps.connecting}
+        configOptions={ps.configOptions}
+        onConnect={ps.connectAgent}
+        onDisconnect={ps.disconnectAgent}
+        onSetConfigOption={ps.setConfigOption}
       />
 
       <div className="flex-1 min-h-0 relative">
-        {activeSession ? (
+        {ps.activeSession ? (
           <ChatView
-            sessionId={activeSession.id}
-            connected={connected}
-            lastSentPrompt={lastSentPrompt}
-            promptError={promptError}
-            onPromptingChange={onPromptingChange}
-            onConnectionChange={onConnectionChange}
-            onConfigOptionsChange={handleConfigOptionsChange}
-            onAvailableCommandsChange={handleAvailableCommandsChange}
+            sessionId={ps.activeSession.id}
+            connected={ps.connected}
+            lastSentPrompt={ps.lastSentPrompt}
+            promptError={ps.promptError}
+            onPromptingChange={ps.onPromptingChange}
+            onConnectionChange={ps.onConnectionChange}
+            onConfigOptionsChange={ps.onConfigOptionsChange}
+            onAvailableCommandsChange={ps.onAvailableCommandsChange}
           />
         ) : (
           <div className="flex h-full items-center justify-center text-[var(--t-muted)] text-sm">
@@ -203,14 +81,14 @@ export function PaneView({ paneId }: PaneViewProps) {
       </div>
 
       <ChatFooter
-        sessionId={activeSession?.id ?? null}
-        active={hasChat}
-        prompting={prompting}
-        connecting={connecting}
-        connected={connected}
-        availableCommands={availableCommands}
-        onSend={sendPrompt}
-        onCancel={cancelPrompt}
+        sessionId={ps.activeSession?.id ?? null}
+        active={!!ps.activeSession}
+        prompting={ps.prompting}
+        connecting={ps.connecting}
+        connected={ps.connected}
+        availableCommands={ps.availableCommands}
+        onSend={ps.sendPrompt}
+        onCancel={ps.cancelPrompt}
         autoFocus={isFocused}
       />
     </div>

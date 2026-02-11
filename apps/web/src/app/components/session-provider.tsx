@@ -144,7 +144,7 @@ export function SessionProvider({ children, initialData }: { children: ReactNode
     })
   }, [initialData, checkHealth, loadSessions])
 
-  // Poll: health check + status updates
+  // Poll: health check only (connected/prompting state driven by SSE events)
   useEffect(() => {
     if (backendStatus === "checking") return
     const interval = setInterval(async () => {
@@ -156,24 +156,6 @@ export function SessionProvider({ children, initialData }: { children: ReactNode
         if (backendStatus === "offline" || backendStatus === "unauthorized") {
           loadSessions()
         }
-
-        // Update status while online
-        api.sessions.status()
-          .then((res) => {
-            if (res.status === 401) {
-              setToken(null)
-              setBackendStatus("unauthorized")
-              return
-            }
-            if (!res.ok) return
-            return res.json()
-          })
-          .then((data: { connected: string[]; prompting: string[] } | undefined) => {
-            if (!data) return
-            setConnectedSessionIds(new Set(data.connected))
-            setPromptingSessionIds(new Set(data.prompting))
-          })
-          .catch(() => {})
       } catch {
         setBackendStatus("offline")
       }

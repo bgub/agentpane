@@ -47,9 +47,6 @@ export const api = {
     delete: (id: string): Promise<Response> =>
       authFetch(`${API_BASE}/api/sessions/${id}`, { method: "DELETE" }),
 
-    status: (): Promise<Response> =>
-      authFetch(`${API_BASE}/api/sessions/status`),
-
     conversation: (id: string): Promise<Response> =>
       authFetch(`${API_BASE}/api/sessions/${id}/conversation`),
 

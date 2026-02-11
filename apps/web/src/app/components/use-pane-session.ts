@@ -2,25 +2,42 @@
 
 import { useState, useCallback, useEffect, useRef } from "react"
 import { useSession } from "./session-provider"
-import { BackendOfflineScreen } from "./backend-offline-screen"
-import { BackendUnauthorizedScreen } from "./backend-unauthorized-screen"
-import { SessionSetupScreen } from "./session-setup-screen"
-import { ChatHeader } from "./chat-header"
-import { ChatFooter } from "./chat-footer"
-import ChatView, { type ConfigOption, type AvailableCommand } from "./chat-view"
 import { api } from "@/lib/api"
+import type { ConfigOption, AvailableCommand } from "./chat-view"
+import type { Session } from "@/lib/types"
 
-export function MainPanel() {
+export interface PaneSessionState {
+  activeSession: Session | undefined
+  connected: boolean
+  prompting: boolean
+  connecting: boolean
+  lastSentPrompt: { text: string; ts: number } | null
+  promptError: { message: string; ts: number } | null
+  configOptions: ConfigOption[]
+  availableCommands: AvailableCommand[]
+  connectAgent: () => Promise<void>
+  disconnectAgent: () => Promise<void>
+  sendPrompt: (text: string) => Promise<void>
+  cancelPrompt: () => void
+  setConfigOption: (configId: string, value: string) => Promise<void>
+  onConfigOptionsChange: (opts: ConfigOption[]) => void
+  onAvailableCommandsChange: (cmds: AvailableCommand[]) => void
+  onPromptingChange: (sessionId: string, prompting: boolean) => void
+  onConnectionChange: (sessionId: string, connected: boolean, config?: { cwd: string; agent_type: string }) => void
+}
+
+export function usePaneSession(sessionId: string | undefined): PaneSessionState {
   const {
     sessions,
-    activeSessionId,
     connectedSessionIds,
     promptingSessionIds,
-    backendStatus,
-    showSetup,
     onPromptingChange,
     onConnectionChange,
   } = useSession()
+
+  const activeSession = sessions.find((s) => s.id === sessionId)
+  const connected = activeSession ? connectedSessionIds.has(activeSession.id) : false
+  const prompting = activeSession ? promptingSessionIds.has(activeSession.id) : false
 
   const [connecting, setConnecting] = useState(false)
   const [lastSentPrompt, setLastSentPrompt] = useState<{ text: string; ts: number } | null>(null)
@@ -30,18 +47,14 @@ export function MainPanel() {
   const configOptionsRef = useRef(configOptions)
   configOptionsRef.current = configOptions
 
-  // Clear per-session transient state when switching sessions
+  // Clear transient state when session changes
   useEffect(() => {
+    setConnecting(false)
     setLastSentPrompt(null)
     setPromptError(null)
     setConfigOptions([])
     setAvailableCommands([])
-  }, [activeSessionId])
-
-  const activeSession = sessions.find((s) => s.id === activeSessionId)
-  const connected = activeSession ? connectedSessionIds.has(activeSession.id) : false
-  const prompting = activeSession ? promptingSessionIds.has(activeSession.id) : false
-  const hasChat = !!activeSession && !showSetup && backendStatus === "online"
+  }, [sessionId])
 
   const connectAgent = useCallback(async () => {
     if (!activeSession || connecting) return
@@ -67,17 +80,16 @@ export function MainPanel() {
     await api.sessions.disconnect(activeSession.id).catch(() => {})
   }, [activeSession])
 
-  const handleConfigOptionsChange = useCallback((opts: ConfigOption[]) => {
+  const onConfigOptionsChange = useCallback((opts: ConfigOption[]) => {
     setConfigOptions(opts)
   }, [])
 
-  const handleAvailableCommandsChange = useCallback((cmds: AvailableCommand[]) => {
+  const onAvailableCommandsChange = useCallback((cmds: AvailableCommand[]) => {
     setAvailableCommands(cmds)
   }, [])
 
-  const handleSetConfigOption = useCallback(async (configId: string, value: string) => {
+  const setConfigOption = useCallback(async (configId: string, value: string) => {
     if (!activeSession) return
-    // Optimistic update
     const prev = configOptionsRef.current
     setConfigOptions(prev.map((opt) =>
       opt.id === configId ? { ...opt, currentValue: value } : opt
@@ -88,7 +100,6 @@ export function MainPanel() {
         const updated = await res.json() as ConfigOption[]
         setConfigOptions(updated)
       } else {
-        // Revert on failure
         setConfigOptions(prev)
       }
     } catch {
@@ -106,7 +117,6 @@ export function MainPanel() {
 
     setLastSentPrompt({ text, ts: Date.now() })
 
-    // Auto-reconnect if disconnected
     if (!connected) {
       setConnecting(true)
       try {
@@ -139,54 +149,23 @@ export function MainPanel() {
     }
   }, [activeSession, prompting, connected])
 
-  return (
-    <div className="flex-1 min-w-0 min-h-0 flex flex-col bg-[var(--t-bg)]">
-      <ChatHeader
-        cwd={hasChat ? activeSession?.cwd : undefined}
-        connected={connected}
-        prompting={prompting}
-        connecting={connecting}
-        configOptions={configOptions}
-        onConnect={connectAgent}
-        onDisconnect={disconnectAgent}
-        onSetConfigOption={handleSetConfigOption}
-      />
-
-      <div className="flex-1 min-h-0 relative">
-        {backendStatus === "offline" ? (
-          <BackendOfflineScreen />
-        ) : backendStatus === "unauthorized" ? (
-          <BackendUnauthorizedScreen />
-        ) : showSetup ? (
-          <SessionSetupScreen />
-        ) : activeSession ? (
-          <ChatView
-            sessionId={activeSession.id}
-            connected={connected}
-            lastSentPrompt={lastSentPrompt}
-            promptError={promptError}
-            onPromptingChange={onPromptingChange}
-            onConnectionChange={onConnectionChange}
-            onConfigOptionsChange={handleConfigOptionsChange}
-            onAvailableCommandsChange={handleAvailableCommandsChange}
-          />
-        ) : backendStatus === "checking" ? null : (
-          <div className="flex h-full items-center justify-center text-[var(--t-muted)] text-sm">
-            No sessions. Click + to create one.
-          </div>
-        )}
-      </div>
-
-      <ChatFooter
-        sessionId={activeSession?.id ?? null}
-        active={hasChat}
-        prompting={prompting}
-        connecting={connecting}
-        connected={connected}
-        availableCommands={availableCommands}
-        onSend={sendPrompt}
-        onCancel={cancelPrompt}
-      />
-    </div>
-  )
+  return {
+    activeSession,
+    connected,
+    prompting,
+    connecting,
+    lastSentPrompt,
+    promptError,
+    configOptions,
+    availableCommands,
+    connectAgent,
+    disconnectAgent,
+    sendPrompt,
+    cancelPrompt,
+    setConfigOption,
+    onConfigOptionsChange,
+    onAvailableCommandsChange,
+    onPromptingChange,
+    onConnectionChange,
+  }
 }

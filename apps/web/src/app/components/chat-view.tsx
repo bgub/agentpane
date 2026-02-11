@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useRef, useEffect, useCallback } from "react"
+import { useState, useReducer, useRef, useEffect, useCallback } from "react"
 import { Check, X, Loader2, Terminal, FileText, Search, Brain, Pencil } from "lucide-react"
 import { Streamdown } from "streamdown"
 import { code } from "@streamdown/code"
@@ -564,6 +564,26 @@ function mergeToolCallUpdates(blocks: BlockData[]): BlockData[] {
     })
 }
 
+// --- Immutable streaming block helpers ---
+
+function findToolCallIndex(blocks: StreamingBlock[], toolCallId: string): number {
+  return blocks.findIndex((b) => b.type === "tool_call" && b.state.toolCallId === toolCallId)
+}
+
+function replaceBlock(blocks: StreamingBlock[], index: number, block: StreamingBlock): StreamingBlock[] {
+  return blocks.map((b, i) => (i === index ? block : b))
+}
+
+function patchToolCallState(state: ToolCallState, data: Record<string, unknown>): ToolCallState {
+  const next = { ...state }
+  if (data.title != null) next.title = data.title as string
+  if (data.kind != null) next.kind = data.kind as string
+  if (data.status != null) next.status = data.status as string
+  if (data.rawInput !== undefined) next.rawInput = data.rawInput
+  if (data.rawOutput !== undefined) next.rawOutput = data.rawOutput
+  return next
+}
+
 function applyEventToBlocks(
   blocks: StreamingBlock[],
   data: Record<string, unknown>
@@ -573,93 +593,139 @@ function applyEventToBlocks(
   if (eventType === "agent_message_chunk" && (data.content as Record<string, unknown>)?.type === "text") {
     const text = (data.content as Record<string, unknown>).text as string
     const last = blocks[blocks.length - 1]
-    if (last && last.type === "text") {
-      last.content += text
-    } else {
-      blocks.push({ type: "text", content: text })
+    if (last?.type === "text") {
+      return [...blocks.slice(0, -1), { type: "text", content: last.content + text }]
     }
-  } else if (eventType === "tool_call") {
-    const existing = blocks.find(
-      (b): b is StreamingBlock & { type: "tool_call" } =>
-        b.type === "tool_call" && b.state.toolCallId === data.toolCallId
-    )
-    if (existing) {
-      if (data.title != null) existing.state.title = data.title as string
-      if (data.kind != null) existing.state.kind = data.kind as string
-      if (data.status != null) existing.state.status = data.status as string
-      if (data.rawInput !== undefined) existing.state.rawInput = data.rawInput
-      if (data.rawOutput !== undefined) existing.state.rawOutput = data.rawOutput
-    } else {
+    return [...blocks, { type: "text", content: text }]
+  }
+
+  if (eventType === "tool_call" || eventType === "tool_call_update") {
+    const toolCallId = data.toolCallId as string
+    const idx = findToolCallIndex(blocks, toolCallId)
+    if (idx >= 0) {
+      const existing = (blocks[idx] as { type: "tool_call"; state: ToolCallState }).state
+      return replaceBlock(blocks, idx, { type: "tool_call", state: patchToolCallState(existing, data) })
+    }
+    if (eventType === "tool_call") {
       const state: ToolCallState = {
-        toolCallId: data.toolCallId as string,
+        toolCallId,
         title: (data.title as string) || "Tool call",
         status: (data.status as string) || "in_progress",
       }
       if (data.kind != null) state.kind = data.kind as string
       if (data.rawInput !== undefined) state.rawInput = data.rawInput
       if (data.rawOutput !== undefined) state.rawOutput = data.rawOutput
-      blocks.push({ type: "tool_call", state })
+      return [...blocks, { type: "tool_call", state }]
     }
-  } else if (eventType === "tool_call_update") {
-    const tc = blocks.find(
-      (b): b is StreamingBlock & { type: "tool_call" } =>
-        b.type === "tool_call" && b.state.toolCallId === data.toolCallId
-    )
-    if (tc) {
-      if (data.title != null) tc.state.title = data.title as string
-      if (data.kind != null) tc.state.kind = data.kind as string
-      if (data.status != null) tc.state.status = data.status as string
-      if (data.rawInput !== undefined) tc.state.rawInput = data.rawInput
-      if (data.rawOutput !== undefined) tc.state.rawOutput = data.rawOutput
-    }
-  } else if (eventType === "permission_request") {
+    return blocks
+  }
+
+  if (eventType === "permission_request") {
     const toolCall = data.toolCall as Record<string, unknown> | undefined
     const toolCallId = toolCall?.toolCallId as string | undefined
     const requestId = data.requestId as string
     const options = data.options as PermissionOption[]
-
     if (toolCallId) {
-      const existing = blocks.find(
-        (b): b is StreamingBlock & { type: "tool_call" } =>
-          b.type === "tool_call" && b.state.toolCallId === toolCallId
-      )
-      if (existing) {
-        existing.state.permissionRequest = { requestId, options }
-      } else {
-        // Create a new tool call block from the permission request's toolCall data
-        const state: ToolCallState = {
-          toolCallId,
-          title: (toolCall?.title as string) || "Tool call",
-          status: (toolCall?.status as string) || "pending",
-          permissionRequest: { requestId, options },
-        }
-        if (toolCall?.kind != null) state.kind = toolCall.kind as string
-        if (toolCall?.rawInput !== undefined) state.rawInput = toolCall.rawInput
-        blocks.push({ type: "tool_call", state })
+      const idx = findToolCallIndex(blocks, toolCallId)
+      if (idx >= 0) {
+        const existing = (blocks[idx] as { type: "tool_call"; state: ToolCallState }).state
+        return replaceBlock(blocks, idx, {
+          type: "tool_call",
+          state: { ...existing, permissionRequest: { requestId, options } },
+        })
       }
+      const state: ToolCallState = {
+        toolCallId,
+        title: (toolCall?.title as string) || "Tool call",
+        status: (toolCall?.status as string) || "pending",
+        permissionRequest: { requestId, options },
+      }
+      if (toolCall?.kind != null) state.kind = toolCall.kind as string
+      if (toolCall?.rawInput !== undefined) state.rawInput = toolCall.rawInput
+      return [...blocks, { type: "tool_call", state }]
     }
-  } else if (eventType === "plan") {
-    const entries = data.entries as PlanEntry[]
-    const existing = blocks.find(
-      (b): b is StreamingBlock & { type: "plan" } => b.type === "plan"
-    )
-    if (existing) {
-      existing.entries = entries
-    } else {
-      blocks.push({ type: "plan", entries })
-    }
-  } else if (eventType === "permission_resolved") {
-    const requestId = data.requestId as string
-    const tc = blocks.find(
-      (b): b is StreamingBlock & { type: "tool_call" } =>
-        b.type === "tool_call" && b.state.permissionRequest?.requestId === requestId
-    )
-    if (tc) {
-      tc.state.permissionRequest = undefined
-    }
+    return blocks
   }
 
-  return [...blocks]
+  if (eventType === "plan") {
+    const entries = data.entries as PlanEntry[]
+    const idx = blocks.findIndex((b) => b.type === "plan")
+    if (idx >= 0) return replaceBlock(blocks, idx, { type: "plan", entries })
+    return [...blocks, { type: "plan", entries }]
+  }
+
+  if (eventType === "permission_resolved") {
+    const requestId = data.requestId as string
+    const idx = blocks.findIndex(
+      (b) => b.type === "tool_call" && b.state.permissionRequest?.requestId === requestId
+    )
+    if (idx >= 0) {
+      const existing = (blocks[idx] as { type: "tool_call"; state: ToolCallState }).state
+      return replaceBlock(blocks, idx, {
+        type: "tool_call",
+        state: { ...existing, permissionRequest: undefined },
+      })
+    }
+    return blocks
+  }
+
+  return blocks
+}
+
+// --- Chat state reducer ---
+
+interface ChatState {
+  turns: TurnData[]
+  streamingBlocks: StreamingBlock[]
+  prompting: boolean
+}
+
+type ChatAction =
+  | { type: 'SET_TURNS'; turns: TurnData[] }
+  | { type: 'ADD_OPTIMISTIC_TURN'; turn: TurnData }
+  | { type: 'SSE_PROMPT_STARTED' }
+  | { type: 'SSE_DONE' }
+  | { type: 'SSE_STATUS'; prompting: boolean }
+  | { type: 'SSE_ERROR'; message: string }
+  | { type: 'SSE_DISCONNECTED' }
+  | { type: 'SSE_STREAMING'; data: Record<string, unknown> }
+  | { type: 'APPEND_ERROR'; message: string }
+  | { type: 'REFRESH'; turns: TurnData[] }
+  | { type: 'RESET'; turns?: TurnData[] }
+
+function appendError(blocks: StreamingBlock[], message: string): StreamingBlock[] {
+  const last = blocks[blocks.length - 1]
+  if (last?.type === "text") {
+    return [...blocks.slice(0, -1), { type: "text", content: last.content + `\n\n${message}` }]
+  }
+  return [...blocks, { type: "text", content: message }]
+}
+
+function chatReducer(state: ChatState, action: ChatAction): ChatState {
+  switch (action.type) {
+    case 'SET_TURNS':
+      return { ...state, turns: action.turns }
+    case 'ADD_OPTIMISTIC_TURN':
+      return { ...state, turns: [...state.turns, action.turn] }
+    case 'SSE_PROMPT_STARTED':
+      return { ...state, prompting: true, streamingBlocks: [] }
+    case 'SSE_DONE':
+      return { ...state, prompting: false }
+    case 'SSE_STATUS':
+      return state.prompting === action.prompting ? state : { ...state, prompting: action.prompting }
+    case 'SSE_ERROR':
+      return { ...state, prompting: false, streamingBlocks: appendError(state.streamingBlocks, action.message) }
+    case 'SSE_DISCONNECTED':
+      return { ...state, prompting: false }
+    case 'SSE_STREAMING':
+      return { ...state, streamingBlocks: applyEventToBlocks(state.streamingBlocks, action.data) }
+    case 'APPEND_ERROR':
+      return { ...state, streamingBlocks: appendError(state.streamingBlocks, action.message) }
+    case 'REFRESH':
+      return { ...state, turns: action.turns, streamingBlocks: [] }
+    case 'RESET':
+      return { turns: action.turns ?? [], streamingBlocks: [], prompting: false }
+  }
 }
 
 export default function ChatView({
@@ -674,19 +740,20 @@ export default function ChatView({
 }: ChatViewProps) {
   const { consumeInitialConversation } = useSession()
   const skipFetchRef = useRef(false)
-  const [turns, setTurns] = useState<TurnData[]>(() => {
-    const initial = consumeInitialConversation(sessionId)
-    if (Array.isArray(initial)) {
-      skipFetchRef.current = true
-      return initial as TurnData[]
+  const [{ turns, streamingBlocks, prompting }, dispatch] = useReducer(
+    chatReducer,
+    sessionId,
+    (id) => {
+      const initial = consumeInitialConversation(id)
+      if (Array.isArray(initial)) {
+        skipFetchRef.current = true
+        return { turns: initial as TurnData[], streamingBlocks: [], prompting: false }
+      }
+      return { turns: [], streamingBlocks: [], prompting: false }
     }
-    return []
-  })
-  const [streamingBlocks, setStreamingBlocks] = useState<StreamingBlock[]>([])
-  const [prompting, setPrompting] = useState(false)
+  )
 
   const scrollRef = useRef<HTMLDivElement>(null)
-  const blocksRef = useRef<StreamingBlock[]>([])
   const lastPromptTsRef = useRef(0)
   const lastErrorTsRef = useRef(0)
 
@@ -696,15 +763,11 @@ export default function ChatView({
     setPrevSessionId(sessionId)
     const initial = consumeInitialConversation(sessionId)
     if (Array.isArray(initial)) {
-      setTurns(initial as TurnData[])
+      dispatch({ type: 'RESET', turns: initial as TurnData[] })
       skipFetchRef.current = true
     } else {
-      setTurns([])
+      dispatch({ type: 'RESET' })
     }
-    setStreamingBlocks([])
-    setPrompting(false)
-    blocksRef.current = []
-    // Mark current prompt/error as consumed so they don't replay in the new session
     lastPromptTsRef.current = lastSentPrompt?.ts ?? 0
     lastErrorTsRef.current = promptError?.ts ?? 0
   }
@@ -726,21 +789,23 @@ export default function ChatView({
   useEffect(() => {
     if (lastSentPrompt && lastSentPrompt.ts !== lastPromptTsRef.current) {
       lastPromptTsRef.current = lastSentPrompt.ts
-      const userTurn: TurnData = {
-        id: `temp-user-${lastSentPrompt.ts}`,
-        session_id: sessionId,
-        role: "user",
-        stop_reason: "end_turn",
-        created_at: lastSentPrompt.ts,
-        blocks: [{
-          id: `temp-block-${lastSentPrompt.ts}`,
-          turn_id: `temp-user-${lastSentPrompt.ts}`,
-          kind: "text",
-          content: lastSentPrompt.text,
+      dispatch({
+        type: 'ADD_OPTIMISTIC_TURN',
+        turn: {
+          id: `temp-user-${lastSentPrompt.ts}`,
+          session_id: sessionId,
+          role: "user",
+          stop_reason: "end_turn",
           created_at: lastSentPrompt.ts,
-        }],
-      }
-      setTurns((prev) => [...prev, userTurn])
+          blocks: [{
+            id: `temp-block-${lastSentPrompt.ts}`,
+            turn_id: `temp-user-${lastSentPrompt.ts}`,
+            kind: "text",
+            content: lastSentPrompt.text,
+            created_at: lastSentPrompt.ts,
+          }],
+        },
+      })
     }
   }, [lastSentPrompt, sessionId])
 
@@ -748,19 +813,11 @@ export default function ChatView({
   useEffect(() => {
     if (promptError && promptError.ts !== lastErrorTsRef.current) {
       lastErrorTsRef.current = promptError.ts
-      const blocks = blocksRef.current
-      const last = blocks[blocks.length - 1]
-      if (last && last.type === "text") {
-        last.content += `\n\n${promptError.message}`
-      } else {
-        blocks.push({ type: "text", content: promptError.message })
-      }
-      blocksRef.current = blocks
-      setStreamingBlocks([...blocks])
+      dispatch({ type: 'APPEND_ERROR', message: promptError.message })
     }
   }, [promptError])
 
-  // Load conversation — skip if pre-fetched data was used (from useState init or session switch)
+  // Load conversation — skip if pre-fetched data was used
   useEffect(() => {
     if (skipFetchRef.current) {
       skipFetchRef.current = false
@@ -773,7 +830,7 @@ export default function ChatView({
         return res.json()
       })
       .then((data: TurnData[] | undefined) => {
-        if (!stale && Array.isArray(data)) setTurns(data)
+        if (!stale && Array.isArray(data)) dispatch({ type: 'SET_TURNS', turns: data })
       })
       .catch(() => {})
     return () => { stale = true }
@@ -788,9 +845,7 @@ export default function ChatView({
       })
       .then((data: TurnData[]) => {
         if (!Array.isArray(data)) return
-        setTurns(data)
-        blocksRef.current = []
-        setStreamingBlocks([])
+        dispatch({ type: 'REFRESH', turns: data })
       })
       .catch(() => {})
   }, [sessionId])
@@ -805,8 +860,7 @@ export default function ChatView({
         const eventType = data.sessionUpdate as string
 
         if (eventType === "status") {
-          const isPrompting = data.prompting as boolean
-          setPrompting(isPrompting)
+          dispatch({ type: 'SSE_STATUS', prompting: data.prompting as boolean })
         } else if (eventType === "connected") {
           onConnectionChange?.(sessionId, true)
           onConfigOptionsChange?.((data.configOptions as ConfigOption[]) ?? [])
@@ -816,34 +870,19 @@ export default function ChatView({
         } else if (eventType === "available_commands_update") {
           onAvailableCommandsChange?.((data.availableCommands as AvailableCommand[]) ?? [])
         } else if (eventType === "prompt_started") {
-          setPrompting(true)
-          blocksRef.current = []
-          setStreamingBlocks([])
+          dispatch({ type: 'SSE_PROMPT_STARTED' })
         } else if (eventType === "done") {
-          setPrompting(false)
+          dispatch({ type: 'SSE_DONE' })
           refreshConversation()
         } else if (eventType === "error") {
-          const blocks = blocksRef.current
-          const last = blocks[blocks.length - 1]
-          if (last && last.type === "text") {
-            last.content += `\n\nError: ${data.message}`
-          } else {
-            blocks.push({ type: "text", content: `Error: ${data.message}` })
-          }
-          blocksRef.current = blocks
-          setStreamingBlocks([...blocks])
-          setPrompting(false)
+          dispatch({ type: 'SSE_ERROR', message: `Error: ${data.message}` })
         } else if (eventType === "disconnected") {
-          setPrompting(false)
+          dispatch({ type: 'SSE_DISCONNECTED' })
           onConnectionChange?.(sessionId, false)
           onConfigOptionsChange?.([])
           onAvailableCommandsChange?.([])
-
         } else {
-          // agent_message_chunk, tool_call, tool_call_update, permission_request, permission_resolved
-          const updated = applyEventToBlocks(blocksRef.current, data)
-          blocksRef.current = updated
-          setStreamingBlocks(updated)
+          dispatch({ type: 'SSE_STREAMING', data })
         }
       } catch {
         // Ignore parse errors
@@ -854,11 +893,7 @@ export default function ChatView({
       // EventSource auto-reconnects
     }
 
-    return () => {
-      es.close()
-      blocksRef.current = []
-      setStreamingBlocks([])
-    }
+    return () => es.close()
   }, [sessionId, refreshConversation, onConnectionChange, onConfigOptionsChange, onAvailableCommandsChange])
 
   return (
