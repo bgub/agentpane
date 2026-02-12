@@ -40,6 +40,7 @@ export default function ChatView({
   const scrollRef = useRef<HTMLDivElement>(null)
   const lastPromptTsRef = useRef(0)
   const lastErrorTsRef = useRef(0)
+  const latestEventIdRef = useRef<number | undefined>(undefined)
 
   // Synchronous reset on session switch (clears streaming state before paint)
   const [prevSessionId, setPrevSessionId] = useState(sessionId)
@@ -48,6 +49,7 @@ export default function ChatView({
     dispatch({ type: 'RESET' })
     lastPromptTsRef.current = lastSentPrompt?.ts ?? 0
     lastErrorTsRef.current = promptError?.ts ?? 0
+    latestEventIdRef.current = undefined
   }
 
   // Merge query turns + optimistic turn (if not yet in query data)
@@ -109,8 +111,11 @@ export default function ChatView({
       try {
         const data = JSON.parse(event.data) as Record<string, unknown>
         const eventType = data.sessionUpdate as string
+        const eventId = event.lastEventId ? parseInt(event.lastEventId, 10) : undefined
 
         if (eventType === "status") {
+          // Initial status event on connect/reconnect — sets the replay watermark
+          latestEventIdRef.current = typeof data.latestEventId === "number" ? data.latestEventId : undefined
           dispatch({ type: 'SSE_STATUS', prompting: data.prompting as boolean })
           patchSession({ prompting: data.prompting as boolean })
         } else if (eventType === "connected") {
@@ -122,13 +127,17 @@ export default function ChatView({
         } else if (eventType === "available_commands_update") {
           onAvailableCommandsChange?.((data.availableCommands as AvailableCommand[]) ?? [])
         } else if (eventType === "prompt_started") {
+          // Skip replayed events from ring buffer (they predate our initial status)
+          if (eventId != null && latestEventIdRef.current != null && eventId <= latestEventIdRef.current) return
           dispatch({ type: 'SSE_PROMPT_STARTED' })
           patchSession({ prompting: true })
         } else if (eventType === "done") {
+          if (eventId != null && latestEventIdRef.current != null && eventId <= latestEventIdRef.current) return
           dispatch({ type: 'SSE_DONE' })
           patchSession({ prompting: false })
           queryClient.invalidateQueries({ queryKey: queryKeys.conversation(sessionId) })
         } else if (eventType === "error") {
+          if (eventId != null && latestEventIdRef.current != null && eventId <= latestEventIdRef.current) return
           dispatch({ type: 'SSE_ERROR', message: `Error: ${data.message}` })
           patchSession({ prompting: false })
         } else if (eventType === "disconnected") {

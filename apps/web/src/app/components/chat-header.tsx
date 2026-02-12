@@ -68,7 +68,7 @@ export function ChatHeader({ cwd, connected, prompting, connecting, configOption
         {cwd && (
           <button
             onClick={connected ? onDisconnect : onConnect}
-            disabled={connecting || prompting}
+            disabled={connecting}
             className={`flex items-center gap-1.5 px-2 py-1 rounded-md text-xs transition-colors cursor-pointer disabled:cursor-default ${
               connecting
                 ? "text-[var(--t-amber)] bg-[var(--t-amber)]/10"
