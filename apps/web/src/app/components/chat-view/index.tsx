@@ -12,11 +12,14 @@ import { parseToolCallBlock, mergeToolCallUpdates } from "./utils"
 import { chatReducer, INITIAL_CHAT_STATE } from "./streaming"
 import { ToolCallBox } from "./tool-call-box"
 import { PlanView } from "./plan-view"
+import { createCodeComponent } from "./code-block"
 
 // Re-exports for backwards compatibility (used by use-pane-session.ts, chat-header.tsx, etc.)
 export type { ConfigOption, ConfigSelectOption, ConfigSelectGroup, AvailableCommand } from "./types"
 
 const markdownPlugins = { code }
+const CodeComponent = createCodeComponent(code)
+const markdownComponents = { code: CodeComponent } as Record<string, React.ComponentType<Record<string, unknown>>>
 
 export default function ChatView({
   sessionId,
@@ -173,7 +176,7 @@ export default function ChatView({
                         key={b.id}
                         className="text-sm leading-[1.7] text-[var(--t-text)] pl-5 border-l-2 border-[var(--t-border)]"
                       >
-                        <Streamdown plugins={markdownPlugins} mode="static">
+                        <Streamdown plugins={markdownPlugins} components={markdownComponents} mode="static">
                           {b.content}
                         </Streamdown>
                       </div>
@@ -202,7 +205,7 @@ export default function ChatView({
                   key={`stream-${i}`}
                   className="text-sm leading-[1.7] text-[var(--t-text)] pl-5 border-l-2 border-[var(--t-accent)]"
                 >
-                  <Streamdown plugins={markdownPlugins} isAnimating={i === streamingBlocks.length - 1}>
+                  <Streamdown plugins={markdownPlugins} components={markdownComponents} mode={i === streamingBlocks.length - 1 ? "streaming" : "static"} isAnimating={i === streamingBlocks.length - 1}>
                     {block.content}
                   </Streamdown>
                 </div>

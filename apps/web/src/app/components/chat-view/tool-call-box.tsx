@@ -4,6 +4,7 @@ import { useState, useEffect } from "react"
 import { Check } from "lucide-react"
 import { Streamdown } from "streamdown"
 import { code } from "@streamdown/code"
+import { createCodeComponent } from "./code-block"
 import type { ToolCallState, PermissionOption, DiffLine } from "./types"
 import {
   kindIcon,
@@ -19,6 +20,8 @@ import {
 import { api } from "@/lib/api"
 
 const markdownPlugins = { code }
+const CodeComponent = createCodeComponent(code)
+const markdownComponents = { code: CodeComponent } as Record<string, React.ComponentType<Record<string, unknown>>>
 
 export function EditDiffView({ rawInput }: { rawInput: unknown }) {
   const changes = parseEditChanges(rawInput)
@@ -65,7 +68,7 @@ export function EditDiffView({ rawInput }: { rawInput: unknown }) {
 function MarkdownDetailView({ content }: { content: string }) {
   return (
     <div className="text-sm leading-[1.7] text-[var(--t-text)] max-h-96 overflow-y-auto">
-      <Streamdown plugins={markdownPlugins} mode="static">
+      <Streamdown plugins={markdownPlugins} components={markdownComponents} mode="static">
         {content}
       </Streamdown>
     </div>
