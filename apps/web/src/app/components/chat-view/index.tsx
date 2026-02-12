@@ -57,10 +57,10 @@ export default function ChatView({
 
   const hasStreamingContent = streamingBlocks.length > 0
 
-  // Auto-scroll to bottom
+  // Auto-scroll to bottom (in column-reverse, scrollTop 0 = visual bottom)
   useEffect(() => {
     const el = scrollRef.current
-    if (el) el.scrollTop = el.scrollHeight
+    if (el) el.scrollTop = 0
   }, [allTurns, streamingBlocks])
 
   // Handle optimistic user turn from parent
@@ -150,7 +150,7 @@ export default function ChatView({
   }, [sessionId, queryClient, onConfigOptionsChange, onAvailableCommandsChange])
 
   return (
-    <div ref={scrollRef} className="h-full overflow-y-auto">
+    <div ref={scrollRef} className="h-full overflow-y-auto flex flex-col-reverse">
       <div className="max-w-3xl mx-auto px-5 py-6 space-y-1">
         {allTurns.map((turn) => (
           <div key={turn.id}>
