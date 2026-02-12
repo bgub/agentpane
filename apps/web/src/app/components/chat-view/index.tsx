@@ -105,12 +105,18 @@ export default function ChatView({
         const eventType = data.sessionUpdate as string
         const eventId = event.lastEventId ? parseInt(event.lastEventId, 10) : undefined
 
+        // Status event always processed first — it sets the replay watermark
         if (eventType === "status") {
-          // Initial status event on connect/reconnect — sets the replay watermark
           latestEventIdRef.current = typeof data.latestEventId === "number" ? data.latestEventId : undefined
           dispatch({ type: 'SSE_STATUS', prompting: data.prompting as boolean })
           patchSession({ prompting: data.prompting as boolean })
-        } else if (eventType === "connected") {
+          return
+        }
+
+        // Skip replayed ring buffer events (they predate our connection's watermark)
+        if (eventId != null && latestEventIdRef.current != null && eventId <= latestEventIdRef.current) return
+
+        if (eventType === "connected") {
           patchSession({ connected: true })
           onConfigOptionsChange?.((data.configOptions as ConfigOption[]) ?? [])
           onAvailableCommandsChange?.((data.availableCommands as AvailableCommand[]) ?? [])
@@ -119,17 +125,13 @@ export default function ChatView({
         } else if (eventType === "available_commands_update") {
           onAvailableCommandsChange?.((data.availableCommands as AvailableCommand[]) ?? [])
         } else if (eventType === "prompt_started") {
-          // Skip replayed events from ring buffer (they predate our initial status)
-          if (eventId != null && latestEventIdRef.current != null && eventId <= latestEventIdRef.current) return
           dispatch({ type: 'SSE_PROMPT_STARTED' })
           patchSession({ prompting: true })
         } else if (eventType === "done") {
-          if (eventId != null && latestEventIdRef.current != null && eventId <= latestEventIdRef.current) return
           dispatch({ type: 'SSE_DONE' })
           patchSession({ prompting: false })
           queryClient.invalidateQueries({ queryKey: queryKeys.conversation(sessionId) })
         } else if (eventType === "error") {
-          if (eventId != null && latestEventIdRef.current != null && eventId <= latestEventIdRef.current) return
           dispatch({ type: 'SSE_ERROR', message: `Error: ${data.message}` })
           patchSession({ prompting: false })
         } else if (eventType === "disconnected") {

@@ -120,6 +120,6 @@ app.put("/api/settings/:key", async (c) => {
 
 app.route("/api/sessions", sessionsRoutes)
 
-Bun.serve({ fetch: app.fetch, port: 3456 })
+Bun.serve({ fetch: app.fetch, port: 3456, idleTimeout: 255 })
 console.log(`AgentPane server running on http://localhost:3456`)
 console.log(`Open: https://agentpane.dev?token=${AUTH_TOKEN}`)
