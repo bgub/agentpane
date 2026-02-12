@@ -30,11 +30,17 @@ export class SessionNotFoundError extends Schema.TaggedError<SessionNotFoundErro
   {
     id: Schema.String,
   }
-) {}
+) {
+  get httpStatus() { return 404 as const }
+  get httpMessage() { return "Session not found" }
+}
 
 export class AcpConnectionError extends Schema.TaggedError<AcpConnectionError>()(
   "AcpConnectionError",
   {
     message: Schema.String,
   }
-) {}
+) {
+  get httpStatus() { return 502 as const }
+  get httpMessage() { return this.message }
+}

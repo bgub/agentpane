@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useRef, useEffect, useCallback, type KeyboardEvent } from "react"
+import { useState, useRef, useEffect, type KeyboardEvent } from "react"
 import { Square } from "lucide-react"
 import type { AvailableCommand } from "./chat-view"
 
@@ -66,10 +66,10 @@ export function ChatFooter({ sessionId, active, prompting, connecting, connected
     return () => window.removeEventListener("keydown", handleGlobalKeyDown)
   }, [autoFocus, active])
 
-  const selectCommand = useCallback((cmd: AvailableCommand) => {
+  const selectCommand = (cmd: AvailableCommand) => {
     setInput(`/${cmd.name} `)
     textareaRef.current?.focus()
-  }, [])
+  }
 
   const handleKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
     if (showAutocomplete) {

@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useCallback, useEffect, type ReactNode, type DragEvent } from "react"
+import { useState, useEffect, type ReactNode, type DragEvent } from "react"
 import { Group, Panel, Separator, type Layout } from "react-resizable-panels"
 import { Columns2 } from "lucide-react"
 import { useSession } from "./session-provider"
@@ -37,10 +37,10 @@ export function PaneContainer() {
     }
   }, [])
 
-  const handleLayoutChanged = useCallback((layoutMap: Layout) => {
+  const handleLayoutChanged = (layoutMap: Layout) => {
     const sizes = layout.panes.map((pane) => layoutMap[pane.id] ?? 100 / layout.panes.length)
     setPaneSizes(sizes)
-  }, [layout.panes, setPaneSizes])
+  }
 
   const handleSplitDragOver = (e: DragEvent) => {
     if (!e.dataTransfer.types.includes("application/x-sidebar-session")) return

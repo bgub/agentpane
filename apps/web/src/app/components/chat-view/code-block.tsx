@@ -1,6 +1,6 @@
 "use client"
 
-import { isValidElement, useMemo, useState, useEffect, useRef, useCallback, type ReactNode } from "react"
+import { isValidElement, useState, useEffect, useRef, type ReactNode } from "react"
 import { Check, Copy } from "lucide-react"
 import type { CodeHighlighterPlugin } from "streamdown"
 
@@ -65,14 +65,14 @@ function CopyButton({ code }: { code: string }) {
 
   useEffect(() => () => { window.clearTimeout(timerRef.current) }, [])
 
-  const handleCopy = useCallback(async () => {
+  const handleCopy = async () => {
     if (copied) return
     try {
       await navigator.clipboard.writeText(code)
       setCopied(true)
       timerRef.current = window.setTimeout(() => setCopied(false), 2000)
     } catch { /* ignore */ }
-  }, [code, copied])
+  }
 
   return (
     <button
@@ -111,8 +111,8 @@ function SyncCodeBlock({
   plugin: CodeHighlighterPlugin
   themes: [string, string]
 }) {
-  const trimmed = useMemo(() => code.replace(/\n+$/, ""), [code])
-  const fallback = useMemo(() => makeFallback(trimmed), [trimmed])
+  const trimmed = code.replace(/\n+$/, "")
+  const fallback = makeFallback(trimmed)
   const [result, setResult] = useState<TokenResult>(fallback)
 
   useEffect(() => {
@@ -123,22 +123,19 @@ function SyncCodeBlock({
     }
   }, [trimmed, language, plugin, themes])
 
-  const rootVars = useMemo(() => {
-    const vars: Record<string, string> = {}
-    if (result.bg) vars["--sdm-bg"] = result.bg
-    if (result.fg) vars["--sdm-fg"] = result.fg
-    if (result.rootStyle) {
-      for (const part of result.rootStyle.split(";")) {
-        const idx = part.indexOf(":")
-        if (idx > 0) {
-          const key = part.slice(0, idx).trim()
-          const val = part.slice(idx + 1).trim()
-          if (key && val) vars[key] = val
-        }
+  const rootVars: Record<string, string> = {}
+  if (result.bg) rootVars["--sdm-bg"] = result.bg
+  if (result.fg) rootVars["--sdm-fg"] = result.fg
+  if (result.rootStyle) {
+    for (const part of result.rootStyle.split(";")) {
+      const idx = part.indexOf(":")
+      if (idx > 0) {
+        const key = part.slice(0, idx).trim()
+        const val = part.slice(idx + 1).trim()
+        if (key && val) rootVars[key] = val
       }
     }
-    return vars
-  }, [result.bg, result.fg, result.rootStyle])
+  }
 
   return (
     <div

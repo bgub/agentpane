@@ -60,14 +60,21 @@ Pure UI — no backend dependencies (no Effect, no SQLite, no ACP SDK).
 
 ## Key Patterns
 
+### Backend
+
 - Effect services use `Context.Tag` class pattern with static `layer` properties
-- Errors use `Schema.TaggedError` (e.g., `SessionNotFoundError`, `AcpConnectionError`)
+- Errors use `Schema.TaggedError` with `httpStatus`/`httpMessage` getters for self-describing HTTP responses
 - Service methods use `Effect.fn` for call-site tracing
-- Hono routes bridge Effect via `AppRuntime.runPromise` / `AppRuntime.runPromiseExit`
+- Hono routes bridge Effect via `runEffect(c, effect, status?)` — centralizes exit matching and error-to-HTTP mapping
+- For routes without typed errors (DELETE, cancel), use `AppRuntime.runPromise` directly
 - Session-level broadcasters (`Map<sessionId, EventBroadcaster>`) survive agent disconnects
 - `subscribe()` always succeeds (no `AcpConnectionError`), uses session-level broadcaster
 - `connect()` broadcasts `"connected"` event; `disconnect()`/crash broadcasts `"disconnected"`
-- Frontend EventSource is always-on (no `if (!connected) return` guard)
+
+### Frontend
+
+- **No manual memoization** — React Compiler (`babel-plugin-react-compiler`) handles all memoization automatically. Never use `useMemo`, `useCallback`, or `React.memo` — they add noise and the compiler does it better.
+- EventSource is always-on (no `if (!connected) return` guard)
 - Top bar has connect/disconnect toggle button; submitting a prompt auto-reconnects if disconnected
 - Setup mode lives in `SessionLayout`, not `ChatView` — no DB session until user clicks Start
 - Sidebar splits sessions into Active (connected, with status dots) and History (disconnected, muted)

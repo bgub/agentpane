@@ -1,6 +1,6 @@
 "use client"
 
-import { createContext, useContext, useState, useEffect, useCallback, type ReactNode } from "react"
+import { createContext, useContext, useState, useEffect, type ReactNode } from "react"
 import { useQueryClient } from "@tanstack/react-query"
 import { api, setToken } from "@/lib/api"
 import { useSessionsQuery, useStartSessionMutation, useDeleteSessionMutation, useRenameSessionMutation, queryKeys } from "@/lib/queries"
@@ -65,13 +65,13 @@ export function SessionProvider({ children, initialData }: { children: ReactNode
   const deleteSessionMutation = useDeleteSessionMutation()
   const renameSessionMutation = useRenameSessionMutation()
 
-  const setActiveSessionId = useCallback((id: string | null) => {
+  const setActiveSessionId = (id: string | null) => {
     _setActiveSessionId(id)
     if (id) localStorage.setItem("agentpane:activeSessionId", id)
     else localStorage.removeItem("agentpane:activeSessionId")
-  }, [])
+  }
 
-  const checkHealth = useCallback(async () => {
+  const checkHealth = async () => {
     setHealthChecking(true)
     try {
       const res = await api.health()
@@ -84,7 +84,7 @@ export function SessionProvider({ children, initialData }: { children: ReactNode
     setBackendStatus("offline")
     setHealthChecking(false)
     return false
-  }, [])
+  }
 
   // Sync auth token on mount: URL token takes priority, then SSR token from initialData
   useEffect(() => {
@@ -134,21 +134,18 @@ export function SessionProvider({ children, initialData }: { children: ReactNode
     return () => clearInterval(interval)
   }, [backendStatus, queryClient])
 
-  const createSession = useCallback(() => {
+  const createSession = () => {
     setShowSetup(true)
     setActiveSessionId(null)
-  }, [setActiveSessionId])
+  }
 
-  const startSession = useCallback(
-    async (agentType: string, cwd: string) => {
-      const session = await startSessionMutation.mutateAsync({ agentType, cwd })
-      setActiveSessionId(session.id)
-      setShowSetup(false)
-    },
-    [setActiveSessionId, startSessionMutation]
-  )
+  const startSession = async (agentType: string, cwd: string) => {
+    const session = await startSessionMutation.mutateAsync({ agentType, cwd })
+    setActiveSessionId(session.id)
+    setShowSetup(false)
+  }
 
-  const cancelSetup = useCallback(() => {
+  const cancelSetup = () => {
     setShowSetup(false)
     if (sessions.length > 0) {
       const saved = localStorage.getItem("agentpane:activeSessionId")
@@ -158,26 +155,26 @@ export function SessionProvider({ children, initialData }: { children: ReactNode
         _setActiveSessionId(sessions[0].id)
       }
     }
-  }, [sessions])
+  }
 
-  const deleteSession = useCallback(async (id: string) => {
+  const deleteSession = async (id: string) => {
     await deleteSessionMutation.mutateAsync(id)
-  }, [deleteSessionMutation])
+  }
 
-  const renameSession = useCallback(async (id: string, name: string) => {
+  const renameSession = async (id: string, name: string) => {
     await renameSessionMutation.mutateAsync({ id, name })
-  }, [renameSessionMutation])
+  }
 
-  const retryHealth = useCallback(() => {
+  const retryHealth = () => {
     checkHealth().then((online) => {
       if (online) queryClient.invalidateQueries({ queryKey: queryKeys.sessions })
     })
-  }, [checkHealth, queryClient])
+  }
 
-  const setActiveSession = useCallback((id: string) => {
+  const setActiveSession = (id: string) => {
     setShowSetup(false)
     setActiveSessionId(id)
-  }, [setActiveSessionId])
+  }
 
   return (
     <SessionContext value={{

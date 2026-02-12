@@ -1,6 +1,6 @@
 "use client"
 
-import { createContext, useContext, useState, useCallback, useEffect, useRef, type ReactNode } from "react"
+import { createContext, useContext, useState, useEffect, useRef, type ReactNode } from "react"
 import type { Pane, LayoutState } from "@/lib/layout-types"
 import { useSession } from "./session-provider"
 import { api } from "@/lib/api"
@@ -217,7 +217,7 @@ export function LayoutProvider({ children, savedLayout }: { children: ReactNode;
     prevActiveRef.current = activeSessionId
   }, [activeSessionId, initialized]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  const splitPane = useCallback((paneId: string) => {
+  const splitPane = (paneId: string) => {
     setLayout((prev) => {
       if (prev.panes.length >= MAX_PANES) return prev
       const source = prev.panes.find((p) => p.id === paneId)
@@ -232,25 +232,25 @@ export function LayoutProvider({ children, savedLayout }: { children: ReactNode;
       panes.splice(idx + 1, 0, newPane)
       return { panes, focusedPaneId: newPane.id, paneSizes: evenSizes(panes.length) }
     })
-  }, [])
+  }
 
-  const closePane = useCallback((paneId: string) => {
+  const closePane = (paneId: string) => {
     setLayout((prev) => {
       if (prev.panes.length <= 1) return prev
       const panes = prev.panes.filter((p) => p.id !== paneId)
       const focusedPaneId = prev.focusedPaneId === paneId ? panes[0].id : prev.focusedPaneId
       return { panes, focusedPaneId, paneSizes: evenSizes(panes.length) }
     })
-  }, [])
+  }
 
-  const focusPane = useCallback((paneId: string) => {
+  const focusPane = (paneId: string) => {
     setLayout((prev) => {
       if (prev.focusedPaneId === paneId) return prev
       return { ...prev, focusedPaneId: paneId }
     })
-  }, [])
+  }
 
-  const openSessionInPane = useCallback((paneId: string, sessionId: string) => {
+  const openSessionInPane = (paneId: string, sessionId: string) => {
     setLayout((prev) => {
       const panes = prev.panes.map((p) => {
         if (p.id !== paneId) return p
@@ -261,9 +261,9 @@ export function LayoutProvider({ children, savedLayout }: { children: ReactNode;
       })
       return { ...prev, panes, focusedPaneId: paneId }
     })
-  }, [])
+  }
 
-  const closeTab = useCallback((paneId: string, sessionId: string) => {
+  const closeTab = (paneId: string, sessionId: string) => {
     setLayout((prev) => {
       const pane = prev.panes.find((p) => p.id === paneId)
       if (!pane) return prev
@@ -292,9 +292,9 @@ export function LayoutProvider({ children, savedLayout }: { children: ReactNode;
         ),
       }
     })
-  }, [])
+  }
 
-  const moveTab = useCallback((fromPaneId: string, toPaneId: string, sessionId: string) => {
+  const moveTab = (fromPaneId: string, toPaneId: string, sessionId: string) => {
     if (fromPaneId === toPaneId) return
     setLayout((prev) => {
       const fromPane = prev.panes.find((p) => p.id === fromPaneId)
@@ -325,9 +325,9 @@ export function LayoutProvider({ children, savedLayout }: { children: ReactNode;
       const focusedPaneId = panes.some((p) => p.id === toPaneId) ? toPaneId : panes[0].id
       return { panes, focusedPaneId, paneSizes: evenSizes(panes.length) }
     })
-  }, [])
+  }
 
-  const openSessionInFocusedPane = useCallback((sessionId: string) => {
+  const openSessionInFocusedPane = (sessionId: string) => {
     setLayout((prev) => {
       const paneId = prev.focusedPaneId
       const panes = prev.panes.map((p) => {
@@ -339,9 +339,9 @@ export function LayoutProvider({ children, savedLayout }: { children: ReactNode;
       })
       return { ...prev, panes }
     })
-  }, [])
+  }
 
-  const openSessionInNewPane = useCallback((sessionId: string) => {
+  const openSessionInNewPane = (sessionId: string) => {
     setLayout((prev) => {
       if (prev.panes.length >= MAX_PANES) {
         // At max panes — fall back to opening in focused pane
@@ -363,11 +363,11 @@ export function LayoutProvider({ children, savedLayout }: { children: ReactNode;
       const panes = [...prev.panes, newP]
       return { panes, focusedPaneId: newId, paneSizes: evenSizes(panes.length) }
     })
-  }, [])
+  }
 
-  const setPaneSizes = useCallback((sizes: number[]) => {
+  const setPaneSizes = (sizes: number[]) => {
     setLayout((prev) => ({ ...prev, paneSizes: sizes }))
-  }, [])
+  }
 
   const value: LayoutContextValue = {
     layout,

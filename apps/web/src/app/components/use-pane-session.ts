@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useCallback, useEffect, useRef } from "react"
+import { useState, useEffect, useRef } from "react"
 import { useSession } from "./session-provider"
 import { api } from "@/lib/api"
 import type { ConfigOption, AvailableCommand } from "./chat-view"
@@ -48,7 +48,7 @@ export function usePaneSession(sessionId: string | undefined): PaneSessionState 
     setAvailableCommands([])
   }, [sessionId])
 
-  const connectAgent = useCallback(async () => {
+  const connectAgent = async () => {
     if (!activeSession || connecting) return
     setConnecting(true)
     try {
@@ -65,22 +65,22 @@ export function usePaneSession(sessionId: string | undefined): PaneSessionState 
     } finally {
       setConnecting(false)
     }
-  }, [activeSession, connecting])
+  }
 
-  const disconnectAgent = useCallback(async () => {
+  const disconnectAgent = async () => {
     if (!activeSession) return
     await api.sessions.disconnect(activeSession.id).catch(() => {})
-  }, [activeSession])
+  }
 
-  const onConfigOptionsChange = useCallback((opts: ConfigOption[]) => {
+  const onConfigOptionsChange = (opts: ConfigOption[]) => {
     setConfigOptions(opts)
-  }, [])
+  }
 
-  const onAvailableCommandsChange = useCallback((cmds: AvailableCommand[]) => {
+  const onAvailableCommandsChange = (cmds: AvailableCommand[]) => {
     setAvailableCommands(cmds)
-  }, [])
+  }
 
-  const setConfigOption = useCallback(async (configId: string, value: string) => {
+  const setConfigOption = async (configId: string, value: string) => {
     if (!activeSession) return
     const prev = configOptionsRef.current
     setConfigOptions(prev.map((opt) =>
@@ -97,14 +97,14 @@ export function usePaneSession(sessionId: string | undefined): PaneSessionState 
     } catch {
       setConfigOptions(prev)
     }
-  }, [activeSession])
+  }
 
-  const cancelPrompt = useCallback(() => {
+  const cancelPrompt = () => {
     if (!activeSession) return
     api.sessions.cancel(activeSession.id).catch(() => {})
-  }, [activeSession])
+  }
 
-  const sendPrompt = useCallback(async (text: string) => {
+  const sendPrompt = async (text: string) => {
     if (!activeSession || prompting) return
 
     setLastSentPrompt({ text, ts: Date.now() })
@@ -139,7 +139,7 @@ export function usePaneSession(sessionId: string | undefined): PaneSessionState 
     } catch {
       setPromptError({ message: "Error: Network error", ts: Date.now() })
     }
-  }, [activeSession, prompting, connected])
+  }
 
   return {
     activeSession,
