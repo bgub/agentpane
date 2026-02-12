@@ -1,3 +1,5 @@
+export const MAX_PANES = 4
+
 export interface Pane {
   id: string
   tabSessionIds: string[]

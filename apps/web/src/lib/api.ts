@@ -1,4 +1,5 @@
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3456"
+import { API_BASE } from "./constants"
+
 const TOKEN_KEY = "agentpane:authToken"
 
 export function getToken(): string | null {

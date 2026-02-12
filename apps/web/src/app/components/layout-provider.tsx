@@ -1,13 +1,12 @@
 "use client"
 
 import { createContext, useContext, useState, useEffect, useRef, type ReactNode } from "react"
-import type { Pane, LayoutState } from "@/lib/layout-types"
+import { MAX_PANES, type Pane, type LayoutState } from "@/lib/layout-types"
 import { useSession } from "./session-provider"
 import { api } from "@/lib/api"
 
 const OLD_LS_KEY = "agentpane:layout"
 const OLD_ACTIVE_KEY = "agentpane:activeSessionId"
-const MAX_PANES = 4
 
 interface LayoutContextValue {
   layout: LayoutState

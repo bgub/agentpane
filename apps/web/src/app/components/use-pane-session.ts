@@ -3,7 +3,7 @@
 import { useState, useEffect, useRef } from "react"
 import { useSession } from "./session-provider"
 import { api } from "@/lib/api"
-import type { ConfigOption, AvailableCommand } from "./chat-view"
+import type { ConfigOption, AvailableCommand } from "./chat-view/types"
 import type { Session } from "@/lib/types"
 
 export interface PaneSessionState {

@@ -1,6 +1,7 @@
 "use client"
 
 import { type DragEvent } from "react"
+import { DRAG_TYPES } from "@/lib/constants"
 import { useLayout } from "./layout-provider"
 import { TabBar } from "./tab-bar"
 import { ChatHeader } from "./chat-header"
@@ -21,13 +22,13 @@ export function PaneView({ paneId }: PaneViewProps) {
   const ps = usePaneSession(activeTabSessionId || undefined)
 
   const handlePaneDragOver = (e: DragEvent) => {
-    if (!e.dataTransfer.types.includes("application/x-sidebar-session")) return
+    if (!e.dataTransfer.types.includes(DRAG_TYPES.sidebarSession)) return
     e.preventDefault()
     e.dataTransfer.dropEffect = "copy"
   }
 
   const handlePaneDrop = (e: DragEvent) => {
-    const raw = e.dataTransfer.getData("application/x-sidebar-session")
+    const raw = e.dataTransfer.getData(DRAG_TYPES.sidebarSession)
     if (!raw) return
     e.preventDefault()
     try {

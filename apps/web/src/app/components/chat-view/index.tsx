@@ -2,7 +2,6 @@
 
 import { useState, useReducer, useRef, useEffect } from "react"
 import { Streamdown } from "streamdown"
-import { code } from "@streamdown/code"
 import { useQueryClient } from "@tanstack/react-query"
 import { useConversationQuery, queryKeys } from "@/lib/queries"
 import { api } from "@/lib/api"
@@ -12,14 +11,7 @@ import { parseToolCallBlock, mergeToolCallUpdates } from "./utils"
 import { chatReducer, INITIAL_CHAT_STATE } from "./streaming"
 import { ToolCallBox } from "./tool-call-box"
 import { PlanView } from "./plan-view"
-import { createCodeComponent } from "./code-block"
-
-// Re-exports for backwards compatibility (used by use-pane-session.ts, chat-header.tsx, etc.)
-export type { ConfigOption, ConfigSelectOption, ConfigSelectGroup, AvailableCommand } from "./types"
-
-const markdownPlugins = { code }
-const CodeComponent = createCodeComponent(code)
-const markdownComponents = { code: CodeComponent } as Record<string, React.ComponentType<Record<string, unknown>>>
+import { markdownPlugins, markdownComponents } from "./markdown"
 
 export default function ChatView({
   sessionId,

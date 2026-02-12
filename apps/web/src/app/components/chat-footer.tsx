@@ -2,7 +2,7 @@
 
 import { useState, useRef, useEffect, type KeyboardEvent } from "react"
 import { Square } from "lucide-react"
-import type { AvailableCommand } from "./chat-view"
+import type { AvailableCommand } from "./chat-view/types"
 
 interface ChatFooterProps {
   sessionId: string | null

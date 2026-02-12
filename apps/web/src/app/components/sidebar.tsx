@@ -9,6 +9,7 @@ import {
 } from "@/components/ui/dropdown-menu"
 import { EllipsisVertical, Loader2, Plus, Sun, Moon, Monitor } from "lucide-react"
 import { useTheme } from "next-themes"
+import { DRAG_TYPES } from "@/lib/constants"
 import { PROVIDER_INFO } from "./providers"
 import { useSession } from "./session-provider"
 import { useLayout } from "./layout-provider"
@@ -93,7 +94,7 @@ export default function Sidebar() {
     const isActive = focusedPane?.activeTabSessionId === session.id && !showSetup
 
     const handleDragStart = (e: DragEvent) => {
-      e.dataTransfer.setData("application/x-sidebar-session", JSON.stringify({ sessionId: session.id }))
+      e.dataTransfer.setData(DRAG_TYPES.sidebarSession, JSON.stringify({ sessionId: session.id }))
       e.dataTransfer.effectAllowed = "copyMove"
     }
 
