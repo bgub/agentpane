@@ -17,8 +17,6 @@ import type { Session } from "@/lib/types"
 export default function Sidebar() {
   const {
     sessions,
-    connectedSessionIds,
-    promptingSessionIds,
     showSetup,
     backendStatus,
     createSession,
@@ -72,18 +70,18 @@ export default function Sidebar() {
 
   // Split sessions into active (connected) and history (disconnected)
   const activeSessions = sessions
-    .filter((s) => connectedSessionIds.has(s.id))
+    .filter((s) => s.connected)
     .sort((a, b) => b.created_at - a.created_at)
 
   const historySessions = sessions
-    .filter((s) => !connectedSessionIds.has(s.id))
+    .filter((s) => !s.connected)
     .sort((a, b) => b.created_at - a.created_at)
 
-  const statusDot = (sessionId: string) => {
-    if (promptingSessionIds.has(sessionId)) {
+  const statusDot = (session: Session) => {
+    if (session.prompting) {
       return <span className="shrink-0 size-2 rounded-full bg-[var(--t-amber)] animate-pulse" />
     }
-    if (connectedSessionIds.has(sessionId)) {
+    if (session.connected) {
       return <span className="shrink-0 size-2 rounded-full bg-[var(--t-green)]" />
     }
     return null
@@ -127,7 +125,7 @@ export default function Sidebar() {
           />
         ) : (
           <>
-            {statusDot(session.id)}
+            {statusDot(session)}
             <span className="flex-1 truncate">{session.name}</span>
             {session.agent_type && (
               <span className="shrink-0 text-[10px] font-mono font-medium tracking-wide text-[var(--t-muted)]">

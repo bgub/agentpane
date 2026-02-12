@@ -22,22 +22,14 @@ export interface PaneSessionState {
   setConfigOption: (configId: string, value: string) => Promise<void>
   onConfigOptionsChange: (opts: ConfigOption[]) => void
   onAvailableCommandsChange: (cmds: AvailableCommand[]) => void
-  onPromptingChange: (sessionId: string, prompting: boolean) => void
-  onConnectionChange: (sessionId: string, connected: boolean, config?: { cwd: string; agent_type: string }) => void
 }
 
 export function usePaneSession(sessionId: string | undefined): PaneSessionState {
-  const {
-    sessions,
-    connectedSessionIds,
-    promptingSessionIds,
-    onPromptingChange,
-    onConnectionChange,
-  } = useSession()
+  const { sessions } = useSession()
 
   const activeSession = sessions.find((s) => s.id === sessionId)
-  const connected = activeSession ? connectedSessionIds.has(activeSession.id) : false
-  const prompting = activeSession ? promptingSessionIds.has(activeSession.id) : false
+  const connected = !!activeSession?.connected
+  const prompting = !!activeSession?.prompting
 
   const [connecting, setConnecting] = useState(false)
   const [lastSentPrompt, setLastSentPrompt] = useState<{ text: string; ts: number } | null>(null)
@@ -165,7 +157,5 @@ export function usePaneSession(sessionId: string | undefined): PaneSessionState 
     setConfigOption,
     onConfigOptionsChange,
     onAvailableCommandsChange,
-    onPromptingChange,
-    onConnectionChange,
   }
 }

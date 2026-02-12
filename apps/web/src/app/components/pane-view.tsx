@@ -65,11 +65,8 @@ export function PaneView({ paneId }: PaneViewProps) {
         {ps.activeSession ? (
           <ChatView
             sessionId={ps.activeSession.id}
-            connected={ps.connected}
             lastSentPrompt={ps.lastSentPrompt}
             promptError={ps.promptError}
-            onPromptingChange={ps.onPromptingChange}
-            onConnectionChange={ps.onConnectionChange}
             onConfigOptionsChange={ps.onConfigOptionsChange}
             onAvailableCommandsChange={ps.onAvailableCommandsChange}
           />

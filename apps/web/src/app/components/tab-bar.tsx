@@ -4,6 +4,7 @@ import { useState, type DragEvent } from "react"
 import { X, Columns2, PanelRightClose } from "lucide-react"
 import { useSession } from "./session-provider"
 import { useLayout } from "./layout-provider"
+import type { Session } from "@/lib/types"
 
 interface TabBarProps {
   paneId: string
@@ -13,7 +14,7 @@ interface TabBarProps {
 }
 
 export function TabBar({ paneId, tabSessionIds, activeTabSessionId, isFocused }: TabBarProps) {
-  const { sessions, connectedSessionIds, promptingSessionIds } = useSession()
+  const { sessions } = useSession()
   const { layout, openSessionInPane, closeTab, moveTab, splitPane, closePane, focusPane } = useLayout()
   const [dropTarget, setDropTarget] = useState(false)
 
@@ -62,11 +63,11 @@ export function TabBar({ paneId, tabSessionIds, activeTabSessionId, isFocused }:
     }
   }
 
-  const statusDot = (sessionId: string) => {
-    if (promptingSessionIds.has(sessionId)) {
+  const statusDot = (session: Session | undefined) => {
+    if (session?.prompting) {
       return <span className="shrink-0 size-1.5 rounded-full bg-[var(--t-amber)] animate-pulse" />
     }
-    if (connectedSessionIds.has(sessionId)) {
+    if (session?.connected) {
       return <span className="shrink-0 size-1.5 rounded-full bg-[var(--t-green)]" />
     }
     return <span className="shrink-0 size-1.5 rounded-full bg-[var(--t-dim)]/40" />
@@ -110,7 +111,7 @@ export function TabBar({ paneId, tabSessionIds, activeTabSessionId, isFocused }:
                   isFocused ? "bg-[var(--t-accent)]" : "bg-[var(--t-dim)]/50"
                 }`} />
               )}
-              {statusDot(sessionId)}
+              {statusDot(session)}
               <span className="truncate max-w-32">{session?.name ?? "Session"}</span>
               <button
                 onClick={(e) => {
