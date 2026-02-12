@@ -1,5 +1,6 @@
 import { Check, X, Loader2, Terminal, FileText, Search, Brain, Pencil } from "lucide-react"
 import { createElement } from "react"
+import { diffLines } from "diff"
 import type { DiffLine, FileChange } from "./types"
 
 export function kindIcon(kind?: string) {
@@ -88,41 +89,12 @@ export function isPlanSubagent(raw: unknown): boolean {
 }
 
 export function computeLineDiff(oldText: string, newText: string): DiffLine[] {
-  const oldLines = oldText.split("\n")
-  const newLines = newText.split("\n")
-  const m = oldLines.length
-  const n = newLines.length
-
-  // LCS dynamic programming
-  const dp: number[][] = Array.from({ length: m + 1 }, () => new Array<number>(n + 1).fill(0))
-  for (let i = 1; i <= m; i++) {
-    for (let j = 1; j <= n; j++) {
-      dp[i][j] =
-        oldLines[i - 1] === newLines[j - 1]
-          ? dp[i - 1][j - 1] + 1
-          : Math.max(dp[i - 1][j], dp[i][j - 1])
-    }
-  }
-
-  // Backtrack to build diff
-  const stack: DiffLine[] = []
-  let i = m
-  let j = n
-  while (i > 0 || j > 0) {
-    if (i > 0 && j > 0 && oldLines[i - 1] === newLines[j - 1]) {
-      stack.push({ type: "same", content: oldLines[i - 1] })
-      i--
-      j--
-    } else if (j > 0 && (i === 0 || dp[i][j - 1] >= dp[i - 1][j])) {
-      stack.push({ type: "add", content: newLines[j - 1] })
-      j--
-    } else {
-      stack.push({ type: "remove", content: oldLines[i - 1] })
-      i--
-    }
-  }
-
-  return stack.reverse()
+  return diffLines(oldText, newText).flatMap((part) =>
+    part.value.replace(/\n$/, "").split("\n").map((line): DiffLine => ({
+      type: part.added ? "add" : part.removed ? "remove" : "same",
+      content: line,
+    }))
+  )
 }
 
 export function parseEditChanges(raw: unknown): FileChange[] | null {
