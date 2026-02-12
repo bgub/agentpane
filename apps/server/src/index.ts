@@ -1,7 +1,6 @@
 import { Hono } from "hono"
 import { cors } from "hono/cors"
 import { bodyLimit } from "hono/body-limit"
-import { serve } from "@hono/node-server"
 import { execFile } from "node:child_process"
 import crypto from "node:crypto"
 import fs from "node:fs"
@@ -121,7 +120,6 @@ app.put("/api/settings/:key", async (c) => {
 
 app.route("/api/sessions", sessionsRoutes)
 
-serve({ fetch: app.fetch, port: 3456 }, (info) => {
-  console.log(`AgentPane server running on http://localhost:${info.port}`)
-  console.log(`Open: https://agentpane.dev?token=${AUTH_TOKEN}`)
-})
+Bun.serve({ fetch: app.fetch, port: 3456 })
+console.log(`AgentPane server running on http://localhost:3456`)
+console.log(`Open: https://agentpane.dev?token=${AUTH_TOKEN}`)
