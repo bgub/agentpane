@@ -5,6 +5,7 @@ import { SessionRepo } from "./session-repo.js"
 import { AcpConnectionError } from "./schema.js"
 import { estimateTokenCount, formatHistory } from "./acp-types.js"
 import { WriteQueue } from "./write-queue.js"
+import type { WriteOp } from "./write-ops.js"
 
 export class PromptEngine extends Context.Tag("@agentpane/PromptEngine")<
   PromptEngine,
@@ -38,16 +39,34 @@ export class PromptEngine extends Context.Tag("@agentpane/PromptEngine")<
           const priorTurns = yield* repo.getConversation(sessionId).pipe(Effect.orDie)
 
           const userTurn = yield* repo.addTurn(sessionId, "user").pipe(Effect.orDie)
-          yield* repo.addMessageBlock(userTurn.id, "text", content).pipe(Effect.orDie)
           const userTokens = estimateTokenCount(content)
-          yield* repo.completeTurn(userTurn.id, "end_turn", {
-            promptTokens: userTokens,
-            completionTokens: 0,
-            totalTokens: userTokens,
-            tokenSource: "estimated",
-          }).pipe(Effect.orDie)
-
           const assistantTurn = yield* repo.addTurn(sessionId, "assistant").pipe(Effect.orDie)
+
+          const initialOps: ReadonlyArray<WriteOp> = [
+            {
+              _tag: "AddMessageBlock",
+              sessionId,
+              turnId: userTurn.id,
+              kind: "text",
+              content,
+            },
+            {
+              _tag: "CompleteTurn",
+              sessionId,
+              turnId: userTurn.id,
+              stopReason: "end_turn",
+              tokenUsage: {
+                promptTokens: userTokens,
+                completionTokens: 0,
+                totalTokens: userTokens,
+                tokenSource: "estimated",
+              },
+            },
+          ]
+
+          yield* writeQueue.enqueueMany(initialOps)
+          yield* writeQueue.flushSession(sessionId)
+
           const fullPrompt = formatHistory(priorTurns) + content
 
           conn.prompting = true
@@ -71,27 +90,7 @@ export class PromptEngine extends Context.Tag("@agentpane/PromptEngine")<
             }
           ) =>
             Effect.gen(function* () {
-              const ops = [] as Array<
-                | {
-                  _tag: "AddMessageBlock"
-                  sessionId: string
-                  turnId: string
-                  kind: string
-                  content: string
-                }
-                | {
-                  _tag: "CompleteTurn"
-                  sessionId: string
-                  turnId: string
-                  stopReason: string
-                  tokenUsage: {
-                    promptTokens: number
-                    completionTokens: number
-                    totalTokens: number
-                    tokenSource: "provider" | "estimated"
-                  }
-                }
-              >
+              const ops: Array<WriteOp> = []
 
               if (conn.accumulatedText) {
                 ops.push({
