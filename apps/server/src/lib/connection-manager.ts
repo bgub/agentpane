@@ -16,6 +16,20 @@ import { makeClient, type ClientDeps } from "./acp-client-callbacks.js"
 import { EventHub } from "./event-hub.js"
 import { WriteQueue } from "./write-queue.js"
 
+export interface ConnectionManagerStats {
+  connectedSessions: number
+  promptingSessions: number
+  terminals: number
+  pendingPermissions: number
+  bySession: ReadonlyArray<{
+    sessionId: string
+    prompting: boolean
+    currentAssistantTurnId: string | null
+    terminals: number
+    pendingPermissions: number
+  }>
+}
+
 export class ConnectionManager extends Context.Tag("@agentpane/ConnectionManager")<
   ConnectionManager,
   {
@@ -53,6 +67,7 @@ export class ConnectionManager extends Context.Tag("@agentpane/ConnectionManager
       configId: string,
       value: string
     ) => Effect.Effect<Array<Record<string, unknown>>, AcpConnectionError>
+    readonly stats: () => ConnectionManagerStats
   }
 >() {
   static readonly layer = Layer.effect(
@@ -360,6 +375,32 @@ export class ConnectionManager extends Context.Tag("@agentpane/ConnectionManager
         }
       )
 
+      const stats = () => {
+        let terminals = 0
+        let pendingPermissions = 0
+        const bySession = [...connections.entries()].map(([sessionId, conn]) => {
+          const terminalCount = conn.terminals.size
+          const pendingPermissionCount = conn.pendingPermissions.size
+          terminals += terminalCount
+          pendingPermissions += pendingPermissionCount
+          return {
+            sessionId,
+            prompting: conn.prompting,
+            currentAssistantTurnId: conn.currentAssistantTurnId,
+            terminals: terminalCount,
+            pendingPermissions: pendingPermissionCount,
+          }
+        })
+
+        return {
+          connectedSessions: connections.size,
+          promptingSessions: promptingSessions.size,
+          terminals,
+          pendingPermissions,
+          bySession,
+        }
+      }
+
       return ConnectionManager.of({
         connect,
         disconnect,
@@ -380,6 +421,7 @@ export class ConnectionManager extends Context.Tag("@agentpane/ConnectionManager
         getAvailableCommands,
         getConfigOptions,
         setConfigOption,
+        stats,
       })
     })
   )

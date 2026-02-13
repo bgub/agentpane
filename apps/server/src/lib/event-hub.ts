@@ -7,6 +7,25 @@ export interface EventHubSubscription {
   readonly latestEventId: number
 }
 
+export interface EventHubSessionStats {
+  readonly sessionId: string
+  readonly connected: boolean
+  readonly subscribers: number
+  readonly replayBytes: number
+  readonly replayEvents: number
+  readonly latestEventId: number
+  readonly oldestEventId: number | null
+}
+
+export interface EventHubStats {
+  readonly sessions: number
+  readonly connectedSessions: number
+  readonly subscribers: number
+  readonly replayBytes: number
+  readonly replayEvents: number
+  readonly bySession: ReadonlyArray<EventHubSessionStats>
+}
+
 const BROADCASTER_IDLE_MS = 5 * 60 * 1000
 
 export class EventHub extends Context.Tag("@agentpane/EventHub")<
@@ -22,6 +41,7 @@ export class EventHub extends Context.Tag("@agentpane/EventHub")<
     readonly broadcast: (sessionId: string, event: unknown) => void
     readonly markConnected: (sessionId: string) => void
     readonly markDisconnected: (sessionId: string) => void
+    readonly stats: () => EventHubStats
   }
 >() {
   static readonly layer = Layer.sync(
@@ -105,6 +125,43 @@ export class EventHub extends Context.Tag("@agentpane/EventHub")<
         scheduleIdleCleanup(sessionId)
       }
 
+      const stats = (): EventHubStats => {
+        let subscribers = 0
+        let replayBytes = 0
+        let replayEvents = 0
+        const bySession: Array<EventHubSessionStats> = []
+
+        for (const [sessionId, broadcaster] of broadcasters.entries()) {
+          const connected = connectedSessions.has(sessionId)
+          const sessionSubscribers = broadcaster.subscriberCount
+          const sessionReplayBytes = broadcaster.replayBytes
+          const sessionReplayEvents = broadcaster.replaySize
+
+          subscribers += sessionSubscribers
+          replayBytes += sessionReplayBytes
+          replayEvents += sessionReplayEvents
+
+          bySession.push({
+            sessionId,
+            connected,
+            subscribers: sessionSubscribers,
+            replayBytes: sessionReplayBytes,
+            replayEvents: sessionReplayEvents,
+            latestEventId: broadcaster.latestEventId,
+            oldestEventId: broadcaster.oldestEventId,
+          })
+        }
+
+        return {
+          sessions: broadcasters.size,
+          connectedSessions: connectedSessions.size,
+          subscribers,
+          replayBytes,
+          replayEvents,
+          bySession,
+        }
+      }
+
       return EventHub.of({
         ensure,
         remove,
@@ -113,6 +170,7 @@ export class EventHub extends Context.Tag("@agentpane/EventHub")<
         broadcast,
         markConnected,
         markDisconnected,
+        stats,
       })
     }
   )

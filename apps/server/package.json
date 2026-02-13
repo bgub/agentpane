@@ -15,6 +15,7 @@
     "build": "tsc",
     "build:compile": "bun build --compile src/index.ts --outfile dist/agentpane",
     "typecheck": "tsc --noEmit",
+    "test": "bun test",
     "prepublishOnly": "tsc"
   },
   "keywords": [

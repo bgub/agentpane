@@ -13,6 +13,12 @@ export interface WriteQueueStats {
   readonly sessions: number
   readonly queuedOps: number
   readonly queuedBytes: number
+  readonly bySession: ReadonlyArray<{
+    sessionId: string
+    queuedOps: number
+    queuedBytes: number
+    flushing: boolean
+  }>
 }
 
 const FLUSH_DELAY_MS = 50
@@ -137,14 +143,28 @@ export class WriteQueue extends Context.Tag("@agentpane/WriteQueue")<
       const stats = (): WriteQueueStats => {
         let queuedOps = 0
         let queuedBytes = 0
-        for (const queue of queues.values()) {
+        const bySession: Array<{
+          sessionId: string
+          queuedOps: number
+          queuedBytes: number
+          flushing: boolean
+        }> = []
+
+        for (const [sessionId, queue] of queues.entries()) {
           queuedOps += queue.ops.length
           queuedBytes += queue.bytes
+          bySession.push({
+            sessionId,
+            queuedOps: queue.ops.length,
+            queuedBytes: queue.bytes,
+            flushing: queue.flushing,
+          })
         }
         return {
           sessions: queues.size,
           queuedOps,
           queuedBytes,
+          bySession,
         }
       }
 

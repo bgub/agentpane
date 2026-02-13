@@ -8,6 +8,7 @@ import path from "node:path"
 import { Effect, Exit } from "effect"
 import { AppRuntime } from "./lib/runtime.js"
 import { SessionRepo } from "./lib/session-repo.js"
+import { AcpClient } from "./lib/acp-client.js"
 import { sessionsRoutes } from "./routes/sessions.js"
 
 const AUTH_TOKEN = crypto.randomBytes(24).toString("base64url")
@@ -70,6 +71,30 @@ app.use("*", bodyLimit({
 }))
 
 app.get("/api/health", (c) => c.json({ app: "agentpane", status: "ok" }))
+
+app.get("/api/metrics", async (c) => {
+  const exit = await AppRuntime.runPromiseExit(
+    Effect.gen(function* () {
+      const acp = yield* AcpClient
+      const usage = process.memoryUsage()
+      return {
+        uptimeSec: Math.round(process.uptime()),
+        memory: {
+          rss: usage.rss,
+          heapTotal: usage.heapTotal,
+          heapUsed: usage.heapUsed,
+          external: usage.external,
+          arrayBuffers: usage.arrayBuffers,
+        },
+        acp: acp.stats(),
+      }
+    })
+  )
+  return Exit.match(exit, {
+    onFailure: () => c.json({ error: "Internal error" }, 500),
+    onSuccess: (value) => c.json(value),
+  })
+})
 
 app.get("/api/git-branch", async (c) => {
   const cwd = c.req.query("cwd")
