@@ -6,6 +6,14 @@ import { Effect, Exit } from "effect"
 import { AppRuntime } from "../lib/runtime.js"
 import { SessionRepo } from "../lib/session-repo.js"
 import { AcpClient } from "../lib/acp-client.js"
+import {
+  asNonEmptyString,
+  asOptionalString,
+  asString,
+  badRequest,
+  parseLastEventId,
+  readJsonObject,
+} from "./validation.js"
 
 type AppContext = SessionRepo | AcpClient
 
@@ -50,21 +58,25 @@ app.get("/", async (c) => {
 
 // POST /sessions — create a new session, optionally auto-connect
 app.post("/", async (c) => {
-  const body = await c.req.json().catch(() => ({}))
+  const body = await readJsonObject(c)
+  const name = asOptionalString(body.name)
+  const agentType = asOptionalString(body.agent_type)
+  const cwdInput = asOptionalString(body.cwd)
+
   return runEffect(c, Effect.gen(function* () {
     const repo = yield* SessionRepo
     const acp = yield* AcpClient
-    const session = yield* repo.create(body.name, body.agent_type)
+    const session = yield* repo.create(name, agentType)
 
-    const cwd = body.cwd || session.cwd
-    if (body.cwd && body.cwd !== session.cwd) {
-      yield* repo.updateCwd(session.id, body.cwd)
+    const cwd = cwdInput || session.cwd
+    if (cwdInput && cwdInput !== session.cwd) {
+      yield* repo.updateCwd(session.id, cwdInput)
     }
 
     acp.ensureBroadcaster(session.id)
 
     let connected = false
-    if (body.agent_type) {
+    if (agentType) {
       yield* acp.connect(session.id, cwd, session.agent_type).pipe(
         Effect.tapError(() =>
           Effect.gen(function* () {
@@ -105,8 +117,10 @@ app.get("/:id", async (c) => runEffect(c,
 
 // PATCH /sessions/:id — rename a session
 app.patch("/:id", async (c) => {
-  const body = await c.req.json()
-  return runEffect(c, Effect.flatMap(SessionRepo, (repo) => repo.rename(c.req.param("id"), body.name)))
+  const body = await readJsonObject(c)
+  const name = asNonEmptyString(body.name)
+  if (!name) return badRequest(c, "name is required")
+  return runEffect(c, Effect.flatMap(SessionRepo, (repo) => repo.rename(c.req.param("id"), name)))
 })
 
 // DELETE /sessions/:id — delete a session
@@ -139,15 +153,18 @@ app.get("/:id/token-usage", async (c) => runEffect(c,
 
 // POST /sessions/:id/prompt — send a prompt to the agent
 app.post("/:id/prompt", async (c) => {
-  const { content } = await c.req.json()
-  if (!content || typeof content !== "string") return c.json({ error: "content is required" }, 400)
+  const body = await readJsonObject(c)
+  const content = asNonEmptyString(body.content)
+  if (!content) return badRequest(c, "content is required")
   return runEffect(c, Effect.flatMap(AcpClient, (acp) => acp.prompt(c.req.param("id"), content)))
 })
 
 // POST /sessions/:id/permission — respond to a permission request
 app.post("/:id/permission", async (c) => {
-  const { requestId, optionId } = await c.req.json()
-  if (!requestId || !optionId) return c.json({ error: "requestId and optionId are required" }, 400)
+  const body = await readJsonObject(c)
+  const requestId = asNonEmptyString(body.requestId)
+  const optionId = asNonEmptyString(body.optionId)
+  if (!requestId || !optionId) return badRequest(c, "requestId and optionId are required")
   return runEffect(c, Effect.gen(function* () {
     yield* (yield* AcpClient).respondToPermission(c.req.param("id"), requestId, optionId)
     return { ok: true }
@@ -166,10 +183,10 @@ app.get("/:id/config", async (c) => runEffect(c,
 
 // POST /sessions/:id/config — set a config option
 app.post("/:id/config", async (c) => {
-  const { configId, value } = await c.req.json()
-  if (!configId || typeof configId !== "string" || typeof value !== "string") {
-    return c.json({ error: "configId and value are required" }, 400)
-  }
+  const body = await readJsonObject(c)
+  const configId = asNonEmptyString(body.configId)
+  const value = asString(body.value)
+  if (!configId || value === undefined) return badRequest(c, "configId and value are required")
   return runEffect(c, Effect.flatMap(AcpClient, (acp) => acp.setConfigOption(c.req.param("id"), configId, value)))
 })
 
@@ -186,11 +203,10 @@ app.get("/:id/events", (c) => {
   const id = c.req.param("id")
 
   // SSE standard: EventSource sends Last-Event-ID on auto-reconnect
-  const lastEventIdHeader = c.req.header("Last-Event-ID")
-  const afterEventId = lastEventIdHeader ? parseInt(lastEventIdHeader, 10) : undefined
+  const afterEventId = parseLastEventId(c.req.header("Last-Event-ID"))
 
   return streamSSE(c, async (stream) => {
-    const { subscriberId, stream: eventStream, prompting, assistantTurnId, latestEventId } =
+    const { subscriberId, stream: eventStream, prompting, assistantTurnId, latestEventId, replayGap } =
       await AppRuntime.runPromise(
         Effect.flatMap(AcpClient, (acp) => acp.subscribe(id, afterEventId))
       )
@@ -203,6 +219,7 @@ app.get("/:id/events", (c) => {
         prompting,
         assistantTurnId,
         latestEventId,
+        replayGap,
       }),
     })
 
@@ -227,13 +244,15 @@ app.get("/:id/events", (c) => {
 
 // POST /sessions/:id/connect — connect agent to session
 app.post("/:id/connect", async (c) => {
-  const body = await c.req.json().catch(() => ({}))
+  const body = await readJsonObject(c)
+  const bodyAgentType = asOptionalString(body.agent_type)
+  const bodyCwd = asOptionalString(body.cwd)
   const id = c.req.param("id")
   return runEffect(c, Effect.gen(function* () {
     const repo = yield* SessionRepo
     const acp = yield* AcpClient
-    const session = body.agent_type && body.cwd
-      ? yield* repo.updateConfig(id, body.agent_type, body.cwd)
+    const session = bodyAgentType && bodyCwd
+      ? yield* repo.updateConfig(id, bodyAgentType, bodyCwd)
       : yield* repo.get(id)
     acp.ensureBroadcaster(id)
     return yield* acp.connect(id, session.cwd, session.agent_type)

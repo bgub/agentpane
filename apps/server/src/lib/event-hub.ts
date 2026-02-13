@@ -5,6 +5,7 @@ export interface EventHubSubscription {
   readonly subscriberId: string
   readonly stream: ReadableStream<string>
   readonly latestEventId: number
+  readonly replayGap: boolean
 }
 
 export interface EventHubSessionStats {
@@ -99,8 +100,8 @@ export class EventHub extends Context.Tag("@agentpane/EventHub")<
       ): Effect.Effect<EventHubSubscription> =>
         Effect.sync(() => {
           const broadcaster = ensure(sessionId)
-          const { subscriberId, stream, latestEventId } = broadcaster.subscribe(afterEventId)
-          return { subscriberId, stream, latestEventId }
+          const { subscriberId, stream, latestEventId, replayGap } = broadcaster.subscribe(afterEventId)
+          return { subscriberId, stream, latestEventId, replayGap }
         })
 
       const unsubscribe = (sessionId: string, subscriberId: string): Effect.Effect<void> =>

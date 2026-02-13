@@ -82,6 +82,18 @@ const migrations = Effect.gen(function* () {
       value TEXT NOT NULL
     )
   `
+  yield* sql`
+    CREATE TABLE IF NOT EXISTS write_queue_ops (
+      id TEXT PRIMARY KEY,
+      session_id TEXT NOT NULL,
+      op_json TEXT NOT NULL,
+      created_at INTEGER NOT NULL
+    )
+  `
+  yield* sql`
+    CREATE INDEX IF NOT EXISTS idx_write_queue_ops_session_created
+    ON write_queue_ops(session_id, created_at, id)
+  `
 })
 
 const dbPath = path.resolve(dataDir, "agentpane.db")

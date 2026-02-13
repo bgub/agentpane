@@ -29,9 +29,14 @@ export class EventBroadcaster {
     subscriberId: string
     stream: ReadableStream<string>
     latestEventId: number
+    replayGap: boolean
   } {
     const subscriberId = `sub-${++this.nextSubId}`
     let subscriber: Subscriber
+    const replayGap =
+      afterEventId !== undefined &&
+      this.buffered.length > 0 &&
+      afterEventId < ((this.buffered[0]?.id ?? 0) - 1)
 
     const stream = new ReadableStream<string>({
       start: (controller) => {
@@ -56,7 +61,7 @@ export class EventBroadcaster {
       },
     })
 
-    return { subscriberId, stream, latestEventId: this.eventCounter }
+    return { subscriberId, stream, latestEventId: this.eventCounter, replayGap }
   }
 
   broadcast(eventData: unknown): void {

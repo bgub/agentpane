@@ -48,4 +48,20 @@ describe("EventBroadcaster", () => {
     expect(first.done).toBe(false)
     expect(parseEventId(first.value!)).toBe(3)
   })
+
+  it("marks replay gap when requested event id is too old", () => {
+    const broadcaster = new EventBroadcaster(220, 100)
+    broadcaster.broadcast({ n: 1, text: "a".repeat(80) })
+    broadcaster.broadcast({ n: 2, text: "b".repeat(80) })
+    broadcaster.broadcast({ n: 3, text: "c".repeat(80) })
+
+    const oldest = broadcaster.oldestEventId
+    if (oldest === null) throw new Error("expected oldest event id")
+
+    const { replayGap } = broadcaster.subscribe(oldest - 2)
+    expect(replayGap).toBe(true)
+
+    const { replayGap: noGap } = broadcaster.subscribe(oldest - 1)
+    expect(noGap).toBe(false)
+  })
 })

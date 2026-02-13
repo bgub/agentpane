@@ -110,6 +110,10 @@ export default function ChatView({
           latestEventIdRef.current = typeof data.latestEventId === "number" ? data.latestEventId : undefined
           dispatch({ type: 'SSE_STATUS', prompting: data.prompting as boolean })
           patchSession({ prompting: data.prompting as boolean })
+          if (data.replayGap === true) {
+            queryClient.invalidateQueries({ queryKey: queryKeys.conversation(sessionId) })
+            queryClient.invalidateQueries({ queryKey: queryKeys.tokenUsage(sessionId) })
+          }
           return
         }
 

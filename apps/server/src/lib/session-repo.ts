@@ -3,7 +3,7 @@ import type { SqlError } from "@effect/sql/SqlError"
 import { Context, Effect, Layer } from "effect"
 import * as crypto from "node:crypto"
 import { Session, Turn, MessageBlock, SessionNotFoundError } from "./schema.js"
-import type { TurnTokenUsage, WriteOp } from "./write-ops.js"
+import type { TurnTokenUsage, WriteOp, QueuedWriteOp } from "./write-ops.js"
 
 interface SessionTokenUsage {
   prompt_tokens: number
@@ -56,6 +56,9 @@ export class SessionRepo extends Context.Tag("@agentpane/SessionRepo")<
     readonly setSetting: (key: string, value: string) => Effect.Effect<void, SqlError>
     readonly getSessionTokenUsage: (sessionId: string) => Effect.Effect<SessionTokenUsage, SqlError>
     readonly persistOps: (ops: ReadonlyArray<WriteOp>) => Effect.Effect<void, SqlError>
+    readonly enqueueWriteOp: (op: WriteOp) => Effect.Effect<QueuedWriteOp, SqlError>
+    readonly loadQueuedWriteOps: () => Effect.Effect<ReadonlyArray<QueuedWriteOp>, SqlError>
+    readonly persistQueuedOps: (ops: ReadonlyArray<QueuedWriteOp>) => Effect.Effect<void, SqlError>
   }
 >() {
   static readonly layer = Layer.effect(
@@ -278,6 +281,87 @@ export class SessionRepo extends Context.Tag("@agentpane/SessionRepo")<
         return yield* Effect.failCause(exit.cause)
       })
 
+      const enqueueWriteOp = Effect.fn("SessionRepo.enqueueWriteOp")(function* (op: WriteOp) {
+        const queueId = crypto.randomUUID()
+        const now = Date.now()
+        yield* sql`
+          INSERT INTO write_queue_ops (id, session_id, op_json, created_at)
+          VALUES (${queueId}, ${op.sessionId}, ${JSON.stringify(op)}, ${now})
+        `
+        return { queueId, op }
+      })
+
+      const loadQueuedWriteOps = Effect.fn("SessionRepo.loadQueuedWriteOps")(function* () {
+        const rows = yield* sql<{ id: string; op_json: string }>`
+          SELECT id, op_json
+          FROM write_queue_ops
+          ORDER BY created_at, id
+        `
+
+        const parsed: Array<QueuedWriteOp> = []
+        for (const row of rows) {
+          try {
+            parsed.push({ queueId: row.id, op: JSON.parse(row.op_json) as WriteOp })
+          } catch {
+            yield* sql`DELETE FROM write_queue_ops WHERE id = ${row.id}`
+          }
+        }
+        return parsed
+      })
+
+      const persistQueuedOps = Effect.fn("SessionRepo.persistQueuedOps")(
+        function* (ops: ReadonlyArray<QueuedWriteOp>) {
+          if (ops.length === 0) return
+
+          const applyOp = (op: WriteOp): Effect.Effect<void, SqlError> =>
+            Effect.gen(function* () {
+              if (op._tag === "AddMessageBlock") {
+                const id = op.id ?? crypto.randomUUID()
+                const now = op.createdAt ?? Date.now()
+                yield* sql`
+                  INSERT INTO message_blocks (id, turn_id, kind, content, created_at)
+                  VALUES (${id}, ${op.turnId}, ${op.kind}, ${op.content}, ${now})
+                `
+                return
+              }
+
+              if (op._tag === "CompleteTurn") {
+                yield* sql`
+                  UPDATE turns
+                  SET
+                    stop_reason = ${op.stopReason},
+                    prompt_tokens = ${op.tokenUsage?.promptTokens ?? null},
+                    completion_tokens = ${op.tokenUsage?.completionTokens ?? null},
+                    total_tokens = ${op.tokenUsage?.totalTokens ?? null},
+                    token_source = ${op.tokenUsage?.tokenSource ?? null}
+                  WHERE id = ${op.turnId}
+                `
+                return
+              }
+
+              yield* sql`
+                UPDATE sessions
+                SET agent_session_id = ${op.agentSessionId}
+                WHERE id = ${op.sessionId}
+              `
+            })
+
+          yield* sql`BEGIN IMMEDIATE TRANSACTION`
+          const exit = yield* Effect.forEach(ops, (queued) => applyOp(queued.op), { discard: true }).pipe(Effect.exit)
+
+          if (exit._tag === "Success") {
+            for (const queued of ops) {
+              yield* sql`DELETE FROM write_queue_ops WHERE id = ${queued.queueId}`
+            }
+            yield* sql`COMMIT`
+            return
+          }
+
+          yield* sql`ROLLBACK`.pipe(Effect.catchAll(() => Effect.void))
+          return yield* Effect.failCause(exit.cause)
+        }
+      )
+
       return SessionRepo.of({
         list,
         get,
@@ -295,6 +379,9 @@ export class SessionRepo extends Context.Tag("@agentpane/SessionRepo")<
         setSetting,
         getSessionTokenUsage,
         persistOps,
+        enqueueWriteOp,
+        loadQueuedWriteOps,
+        persistQueuedOps,
       })
     })
   )

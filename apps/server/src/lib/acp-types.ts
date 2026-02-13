@@ -43,6 +43,7 @@ export interface SubscribeResult {
   prompting: boolean
   assistantTurnId: string | null
   latestEventId: number
+  replayGap: boolean
 }
 
 // ---------------------------------------------------------------------------

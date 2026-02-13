@@ -27,3 +27,8 @@ export type WriteOp =
     readonly sessionId: string
     readonly agentSessionId: string | null
   }
+
+export interface QueuedWriteOp {
+  readonly queueId: string
+  readonly op: WriteOp
+}

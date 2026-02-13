@@ -61,7 +61,7 @@ export class AcpClient extends Context.Tag("@agentpane/AcpClient")<
 
       const subscribe = Effect.fn("AcpClient.subscribe")(
         function* (sessionId: string, afterEventId?: number) {
-          const { subscriberId, stream, latestEventId } = yield* events.subscribe(sessionId, afterEventId)
+          const { subscriberId, stream, latestEventId, replayGap } = yield* events.subscribe(sessionId, afterEventId)
           const promptState = connections.getPromptState(sessionId)
           return {
             subscriberId,
@@ -69,6 +69,7 @@ export class AcpClient extends Context.Tag("@agentpane/AcpClient")<
             prompting: promptState.prompting,
             assistantTurnId: promptState.assistantTurnId,
             latestEventId,
+            replayGap,
           }
         }
       )

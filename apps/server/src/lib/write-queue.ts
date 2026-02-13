@@ -1,10 +1,10 @@
 import { Context, Effect, Layer, Runtime } from "effect"
 import { AcpConnectionError } from "./schema.js"
 import { SessionRepo } from "./session-repo.js"
-import type { WriteOp } from "./write-ops.js"
+import type { WriteOp, QueuedWriteOp } from "./write-ops.js"
 
 interface SessionQueueState {
-  readonly ops: Array<WriteOp>
+  readonly ops: Array<QueuedWriteOp>
   bytes: number
   flushing: boolean
 }
@@ -85,10 +85,10 @@ export class WriteQueue extends Context.Tag("@agentpane/WriteQueue")<
         queue.flushing = true
         const batch = queue.ops.splice(0, queue.ops.length)
         let batchBytes = 0
-        for (const op of batch) batchBytes += opBytes(op)
+        for (const queued of batch) batchBytes += opBytes(queued.op)
         queue.bytes = Math.max(0, queue.bytes - batchBytes)
 
-        const result = yield* repo.persistOps(batch).pipe(Effect.exit)
+        const result = yield* repo.persistQueuedOps(batch).pipe(Effect.exit)
         queue.flushing = false
 
         if (result._tag === "Failure") {
@@ -120,7 +120,16 @@ export class WriteQueue extends Context.Tag("@agentpane/WriteQueue")<
             message: "Session write queue is full; please retry",
           })
         }
-        queue.ops.push(op)
+
+        const queued = yield* repo.enqueueWriteOp(op).pipe(
+          Effect.mapError((err) =>
+            new AcpConnectionError({
+              message: `Failed to enqueue write operation: ${String(err)}`,
+            })
+          )
+        )
+
+        queue.ops.push(queued)
         queue.bytes = nextBytes
         scheduleFlush(op.sessionId)
       })
@@ -139,6 +148,26 @@ export class WriteQueue extends Context.Tag("@agentpane/WriteQueue")<
       })
 
       const pendingSize = (sessionId: string): number => queues.get(sessionId)?.ops.length ?? 0
+
+      const recoverPendingWrites = Effect.fn("WriteQueue.recoverPendingWrites")(function* () {
+        const queuedOps = yield* repo.loadQueuedWriteOps().pipe(
+          Effect.mapError((err) =>
+            new AcpConnectionError({
+              message: `Failed to load queued write operations: ${String(err)}`,
+            })
+          )
+        )
+
+        for (const queued of queuedOps) {
+          const queue = getQueue(queued.op.sessionId)
+          queue.ops.push(queued)
+          queue.bytes += opBytes(queued.op)
+        }
+
+        for (const sessionId of queues.keys()) {
+          scheduleFlush(sessionId)
+        }
+      })
 
       const stats = (): WriteQueueStats => {
         let queuedOps = 0
@@ -167,6 +196,8 @@ export class WriteQueue extends Context.Tag("@agentpane/WriteQueue")<
           bySession,
         }
       }
+
+      yield* recoverPendingWrites()
 
       return WriteQueue.of({
         enqueue,
