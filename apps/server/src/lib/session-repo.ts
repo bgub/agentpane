@@ -3,13 +3,7 @@ import type { SqlError } from "@effect/sql/SqlError"
 import { Context, Effect, Layer } from "effect"
 import * as crypto from "node:crypto"
 import { Session, Turn, MessageBlock, SessionNotFoundError } from "./schema.js"
-
-interface TurnTokenUsage {
-  promptTokens: number | null
-  completionTokens: number | null
-  totalTokens: number | null
-  tokenSource: string | null
-}
+import type { TurnTokenUsage, WriteOp } from "./write-ops.js"
 
 interface SessionTokenUsage {
   prompt_tokens: number
@@ -61,6 +55,7 @@ export class SessionRepo extends Context.Tag("@agentpane/SessionRepo")<
     readonly getSetting: (key: string) => Effect.Effect<string | null, SqlError>
     readonly setSetting: (key: string, value: string) => Effect.Effect<void, SqlError>
     readonly getSessionTokenUsage: (sessionId: string) => Effect.Effect<SessionTokenUsage, SqlError>
+    readonly persistOps: (ops: ReadonlyArray<WriteOp>) => Effect.Effect<void, SqlError>
   }
 >() {
   static readonly layer = Layer.effect(
@@ -235,6 +230,40 @@ export class SessionRepo extends Context.Tag("@agentpane/SessionRepo")<
         }
       })
 
+      const persistOps = Effect.fn("SessionRepo.persistOps")(function* (ops: ReadonlyArray<WriteOp>) {
+        for (const op of ops) {
+          if (op._tag === "AddMessageBlock") {
+            const id = op.id ?? crypto.randomUUID()
+            const now = op.createdAt ?? Date.now()
+            yield* sql`
+              INSERT INTO message_blocks (id, turn_id, kind, content, created_at)
+              VALUES (${id}, ${op.turnId}, ${op.kind}, ${op.content}, ${now})
+            `
+            continue
+          }
+
+          if (op._tag === "CompleteTurn") {
+            yield* sql`
+              UPDATE turns
+              SET
+                stop_reason = ${op.stopReason},
+                prompt_tokens = ${op.tokenUsage?.promptTokens ?? null},
+                completion_tokens = ${op.tokenUsage?.completionTokens ?? null},
+                total_tokens = ${op.tokenUsage?.totalTokens ?? null},
+                token_source = ${op.tokenUsage?.tokenSource ?? null}
+              WHERE id = ${op.turnId}
+            `
+            continue
+          }
+
+          yield* sql`
+            UPDATE sessions
+            SET agent_session_id = ${op.agentSessionId}
+            WHERE id = ${op.sessionId}
+          `
+        }
+      })
+
       return SessionRepo.of({
         list,
         get,
@@ -251,6 +280,7 @@ export class SessionRepo extends Context.Tag("@agentpane/SessionRepo")<
         getSetting,
         setSetting,
         getSessionTokenUsage,
+        persistOps,
       })
     })
   )

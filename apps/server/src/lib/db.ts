@@ -59,6 +59,9 @@ const migrations = Effect.gen(function* () {
     CREATE INDEX IF NOT EXISTS idx_turns_session ON turns(session_id, id)
   `
   yield* sql`
+    CREATE INDEX IF NOT EXISTS idx_turns_session_created_id ON turns(session_id, created_at, id)
+  `
+  yield* sql`
     CREATE TABLE IF NOT EXISTS message_blocks (
       id TEXT PRIMARY KEY,
       turn_id TEXT NOT NULL REFERENCES turns(id) ON DELETE CASCADE,
@@ -69,6 +72,9 @@ const migrations = Effect.gen(function* () {
   `
   yield* sql`
     CREATE INDEX IF NOT EXISTS idx_message_blocks_turn ON message_blocks(turn_id, id)
+  `
+  yield* sql`
+    CREATE INDEX IF NOT EXISTS idx_message_blocks_turn_created_id ON message_blocks(turn_id, created_at, id)
   `
   yield* sql`
     CREATE TABLE IF NOT EXISTS settings (

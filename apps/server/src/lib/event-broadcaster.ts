@@ -6,20 +6,20 @@ interface Subscriber {
 interface BufferedEvent {
   id: number
   payload: string
+  bytes: number
 }
 
 export class EventBroadcaster {
   private subscribers = new Map<string, Subscriber>()
   private nextSubId = 0
   private eventCounter = 0
-  // Circular buffer: fixed-size array with head pointer
-  private ring: (BufferedEvent | undefined)[]
-  private head = 0 // next write position
-  private size = 0
+  private buffered: Array<BufferedEvent> = []
+  private bufferedBytes = 0
 
-  constructor(private readonly bufferCapacity = 1000) {
-    this.ring = new Array(bufferCapacity)
-  }
+  constructor(
+    private readonly maxReplayBytes = 512 * 1024,
+    private readonly maxReplayEvents = 1000
+  ) {}
 
   get latestEventId(): number {
     return this.eventCounter
@@ -39,9 +39,7 @@ export class EventBroadcaster {
 
         // Replay buffered events then register — all synchronous in start(),
         // so no gap between replay and live events (JS single-threaded)
-        const start = (this.head - this.size + this.bufferCapacity) % this.bufferCapacity
-        for (let i = 0; i < this.size; i++) {
-          const evt = this.ring[(start + i) % this.bufferCapacity]!
+        for (const evt of this.buffered) {
           if (afterEventId !== undefined && evt.id <= afterEventId) continue
           try {
             controller.enqueue(evt.payload)
@@ -64,11 +62,19 @@ export class EventBroadcaster {
   broadcast(eventData: unknown): void {
     const id = ++this.eventCounter
     const payload = `id: ${id}\ndata: ${JSON.stringify(eventData)}\n\n`
+    const bytes = Buffer.byteLength(payload, "utf-8")
 
-    // Store in circular buffer (O(1))
-    this.ring[this.head] = { id, payload }
-    this.head = (this.head + 1) % this.bufferCapacity
-    if (this.size < this.bufferCapacity) this.size++
+    // Store in replay buffer (bounded by bytes and event count)
+    this.buffered.push({ id, payload, bytes })
+    this.bufferedBytes += bytes
+    while (
+      this.buffered.length > this.maxReplayEvents ||
+      this.bufferedBytes > this.maxReplayBytes
+    ) {
+      const evicted = this.buffered.shift()
+      if (!evicted) break
+      this.bufferedBytes -= evicted.bytes
+    }
 
     // Deliver to live subscribers
     const dead: string[] = []
@@ -116,6 +122,18 @@ export class EventBroadcaster {
 
   get subscriberCount(): number {
     return this.subscribers.size
+  }
+
+  get replayBytes(): number {
+    return this.bufferedBytes
+  }
+
+  get replaySize(): number {
+    return this.buffered.length
+  }
+
+  get oldestEventId(): number | null {
+    return this.buffered[0]?.id ?? null
   }
 
   private removeSubscriber(subscriberId: string): void {

@@ -51,12 +51,12 @@ export interface SubscribeResult {
 
 export const appendOutput = (terminal: TerminalState, chunk: string) => {
   terminal.output += chunk
+  const outputLimit = terminal.outputByteLimit ?? 256 * 1024
   if (
-    terminal.outputByteLimit !== null &&
-    Buffer.byteLength(terminal.output, "utf-8") > terminal.outputByteLimit
+    Buffer.byteLength(terminal.output, "utf-8") > outputLimit
   ) {
     const buf = Buffer.from(terminal.output, "utf-8")
-    let start = buf.length - terminal.outputByteLimit
+    let start = buf.length - outputLimit
     while (start < buf.length && (buf[start] & 0xc0) === 0x80) {
       start++
     }

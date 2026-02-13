@@ -2,7 +2,6 @@ import { spawn } from "node:child_process"
 import crypto from "node:crypto"
 import fs from "node:fs/promises"
 import { type Client, type Agent, type RequestPermissionOutcome } from "@agentclientprotocol/sdk"
-import { EventBroadcaster } from "./event-broadcaster.js"
 import {
   appendOutput,
   getTerminal,
@@ -16,12 +15,13 @@ import {
 // ---------------------------------------------------------------------------
 
 export interface ClientDeps {
-  readonly addMessageBlock: (
+  readonly enqueueMessageBlock: (
+    sessionId: string,
     turnId: string,
     kind: string,
     content: string
   ) => Promise<void>
-  readonly broadcasters: Map<string, EventBroadcaster>
+  readonly broadcast: (sessionId: string, event: unknown) => void
 }
 
 // ---------------------------------------------------------------------------
@@ -54,7 +54,8 @@ export const makeClient = (
         conn.currentAssistantTurnId &&
         (eventType === "tool_call" || eventType === "tool_call_update")
       ) {
-        deps.addMessageBlock(
+        deps.enqueueMessageBlock(
+          sessionId,
           conn.currentAssistantTurnId,
           eventType,
           JSON.stringify(update)
@@ -72,10 +73,7 @@ export const makeClient = (
       }
 
       // Broadcast to all subscribers via session-level broadcaster
-      const broadcaster = deps.broadcasters.get(sessionId)
-      if (broadcaster) {
-        broadcaster.broadcast(update)
-      }
+      deps.broadcast(sessionId, update)
     },
 
     requestPermission: async (params) => {
@@ -83,15 +81,12 @@ export const makeClient = (
       if (!conn) return { outcome: { outcome: "cancelled" } }
 
       const requestId = crypto.randomUUID()
-      const broadcaster = deps.broadcasters.get(sessionId)
-      if (broadcaster) {
-        broadcaster.broadcast({
-          sessionUpdate: "permission_request",
-          requestId,
-          toolCall: params.toolCall,
-          options: params.options,
-        })
-      }
+      deps.broadcast(sessionId, {
+        sessionUpdate: "permission_request",
+        requestId,
+        toolCall: params.toolCall,
+        options: params.options,
+      })
 
       const outcome = await new Promise<RequestPermissionOutcome>((resolve) => {
         conn.pendingPermissions.set(requestId, { resolve })
@@ -137,7 +132,7 @@ export const makeClient = (
         process: termProc,
         output: "",
         truncated: false,
-        outputByteLimit: params.outputByteLimit ?? null,
+        outputByteLimit: params.outputByteLimit ?? 256 * 1024,
         exitStatus: null,
         exitPromise,
         resolveExit,
@@ -156,6 +151,15 @@ export const makeClient = (
         }
         terminal.exitStatus = status
         resolveExit(status)
+
+        if (conn.currentAssistantTurnId && terminal.output.length > 0) {
+          void deps.enqueueMessageBlock(
+            sessionId,
+            conn.currentAssistantTurnId,
+            "terminal_output",
+            terminal.output
+          )
+        }
       })
       termProc.on("error", (err) => {
         appendOutput(terminal, `\nProcess error: ${err.message}\n`)
