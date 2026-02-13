@@ -4,6 +4,22 @@ import { Context, Effect, Layer } from "effect"
 import * as crypto from "node:crypto"
 import { Session, Turn, MessageBlock, SessionNotFoundError } from "./schema.js"
 
+interface TurnTokenUsage {
+  promptTokens: number | null
+  completionTokens: number | null
+  totalTokens: number | null
+  tokenSource: string | null
+}
+
+interface SessionTokenUsage {
+  prompt_tokens: number
+  completion_tokens: number
+  total_tokens: number
+  provider_turns: number
+  estimated_turns: number
+  tokenized_turns: number
+}
+
 export class SessionRepo extends Context.Tag("@agentpane/SessionRepo")<
   SessionRepo,
   {
@@ -28,7 +44,8 @@ export class SessionRepo extends Context.Tag("@agentpane/SessionRepo")<
     ) => Effect.Effect<Turn, SqlError>
     readonly completeTurn: (
       turnId: string,
-      stopReason: string
+      stopReason: string,
+      tokenUsage?: TurnTokenUsage
     ) => Effect.Effect<void, SqlError>
     readonly addMessageBlock: (
       turnId: string,
@@ -43,6 +60,7 @@ export class SessionRepo extends Context.Tag("@agentpane/SessionRepo")<
     >
     readonly getSetting: (key: string) => Effect.Effect<string | null, SqlError>
     readonly setSetting: (key: string, value: string) => Effect.Effect<void, SqlError>
+    readonly getSessionTokenUsage: (sessionId: string) => Effect.Effect<SessionTokenUsage, SqlError>
   }
 >() {
   static readonly layer = Layer.effect(
@@ -122,15 +140,24 @@ export class SessionRepo extends Context.Tag("@agentpane/SessionRepo")<
           const rows = yield* sql<Turn>`
             INSERT INTO turns (id, session_id, role, stop_reason, created_at)
             VALUES (${id}, ${sessionId}, ${role}, ${null}, ${now})
-            RETURNING id, session_id, role, stop_reason, created_at
+            RETURNING id, session_id, role, stop_reason, prompt_tokens, completion_tokens, total_tokens, token_source, created_at
           `
           return rows[0]
         }
       )
 
       const completeTurn = Effect.fn("SessionRepo.completeTurn")(
-        function* (turnId: string, stopReason: string) {
-          yield* sql`UPDATE turns SET stop_reason = ${stopReason} WHERE id = ${turnId}`
+        function* (turnId: string, stopReason: string, tokenUsage?: TurnTokenUsage) {
+          yield* sql`
+            UPDATE turns
+            SET
+              stop_reason = ${stopReason},
+              prompt_tokens = ${tokenUsage?.promptTokens ?? null},
+              completion_tokens = ${tokenUsage?.completionTokens ?? null},
+              total_tokens = ${tokenUsage?.totalTokens ?? null},
+              token_source = ${tokenUsage?.tokenSource ?? null}
+            WHERE id = ${turnId}
+          `
         }
       )
 
@@ -150,7 +177,7 @@ export class SessionRepo extends Context.Tag("@agentpane/SessionRepo")<
       const getConversation = Effect.fn("SessionRepo.getConversation")(
         function* (sessionId: string) {
           const turns = yield* sql<Turn>`
-            SELECT id, session_id, role, stop_reason, created_at
+            SELECT id, session_id, role, stop_reason, prompt_tokens, completion_tokens, total_tokens, token_source, created_at
             FROM turns
             WHERE session_id = ${sessionId}
             ORDER BY created_at, id
@@ -186,6 +213,28 @@ export class SessionRepo extends Context.Tag("@agentpane/SessionRepo")<
         yield* sql`INSERT OR REPLACE INTO settings (key, value) VALUES (${key}, ${value})`
       })
 
+      const getSessionTokenUsage = Effect.fn("SessionRepo.getSessionTokenUsage")(function* (sessionId: string) {
+        const rows = yield* sql<SessionTokenUsage>`
+          SELECT
+            COALESCE(SUM(prompt_tokens), 0) AS prompt_tokens,
+            COALESCE(SUM(completion_tokens), 0) AS completion_tokens,
+            COALESCE(SUM(total_tokens), 0) AS total_tokens,
+            COALESCE(SUM(CASE WHEN token_source = 'provider' THEN 1 ELSE 0 END), 0) AS provider_turns,
+            COALESCE(SUM(CASE WHEN token_source = 'estimated' THEN 1 ELSE 0 END), 0) AS estimated_turns,
+            COALESCE(SUM(CASE WHEN total_tokens IS NOT NULL THEN 1 ELSE 0 END), 0) AS tokenized_turns
+          FROM turns
+          WHERE session_id = ${sessionId}
+        `
+        return rows[0] ?? {
+          prompt_tokens: 0,
+          completion_tokens: 0,
+          total_tokens: 0,
+          provider_turns: 0,
+          estimated_turns: 0,
+          tokenized_turns: 0,
+        }
+      })
+
       return SessionRepo.of({
         list,
         get,
@@ -201,6 +250,7 @@ export class SessionRepo extends Context.Tag("@agentpane/SessionRepo")<
         getConversation,
         getSetting,
         setSetting,
+        getSessionTokenUsage,
       })
     })
   )

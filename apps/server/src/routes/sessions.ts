@@ -132,6 +132,11 @@ app.get("/:id/conversation", async (c) => {
   return c.json(conversation)
 })
 
+// GET /sessions/:id/token-usage — aggregate token usage for the session
+app.get("/:id/token-usage", async (c) => runEffect(c,
+  Effect.flatMap(SessionRepo, (repo) => repo.getSessionTokenUsage(c.req.param("id")))
+))
+
 // POST /sessions/:id/prompt — send a prompt to the agent
 app.post("/:id/prompt", async (c) => {
   const { content } = await c.req.json()

@@ -51,6 +51,9 @@ export const api = {
     conversation: (id: string): Promise<Response> =>
       authFetch(`${API_BASE}/api/sessions/${id}/conversation`),
 
+    tokenUsage: (id: string): Promise<Response> =>
+      authFetch(`${API_BASE}/api/sessions/${id}/token-usage`),
+
     prompt: (id: string, content: string): Promise<Response> =>
       authFetch(`${API_BASE}/api/sessions/${id}/prompt`, {
         method: "POST",

@@ -8,3 +8,12 @@ export interface Session {
   connected?: boolean
   prompting?: boolean
 }
+
+export interface SessionTokenUsage {
+  prompt_tokens: number
+  completion_tokens: number
+  total_tokens: number
+  provider_turns: number
+  estimated_turns: number
+  tokenized_turns: number
+}

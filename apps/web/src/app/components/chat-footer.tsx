@@ -2,6 +2,7 @@
 
 import { useState, useRef, useEffect, type KeyboardEvent } from "react"
 import { Square } from "lucide-react"
+import { useSessionTokenUsageQuery } from "@/lib/queries"
 import type { AvailableCommand } from "./chat-view/types"
 
 interface ChatFooterProps {
@@ -21,6 +22,11 @@ export function ChatFooter({ sessionId, active, prompting, connecting, connected
   const [selectedIndex, setSelectedIndex] = useState(0)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const menuRef = useRef<HTMLDivElement>(null)
+  const { data: tokenUsage } = useSessionTokenUsageQuery(sessionId ?? undefined)
+
+  const tokenHint = tokenUsage && tokenUsage.tokenized_turns > 0
+    ? `${tokenUsage.total_tokens.toLocaleString()} tok`
+    : null
 
   // Compute filtered commands based on current input
   const filteredCommands = (() => {
@@ -35,14 +41,11 @@ export function ChatFooter({ sessionId, active, prompting, connecting, connected
 
   const showAutocomplete = filteredCommands.length > 0 && !prompting && !connecting
 
-  // Reset selection when filtered list changes
-  useEffect(() => {
-    setSelectedIndex(0)
-  }, [input])
-
   // Clear input when session changes
   useEffect(() => {
+    void sessionId
     setInput("")
+    setSelectedIndex(0)
     if (textareaRef.current) textareaRef.current.style.height = "auto"
   }, [sessionId])
 
@@ -68,6 +71,7 @@ export function ChatFooter({ sessionId, active, prompting, connecting, connected
 
   const selectCommand = (cmd: AvailableCommand) => {
     setInput(`/${cmd.name} `)
+    setSelectedIndex(0)
     textareaRef.current?.focus()
   }
 
@@ -92,6 +96,7 @@ export function ChatFooter({ sessionId, active, prompting, connecting, connected
       if (e.key === "Escape") {
         e.preventDefault()
         setInput("")
+        setSelectedIndex(0)
         return
       }
     }
@@ -101,6 +106,7 @@ export function ChatFooter({ sessionId, active, prompting, connecting, connected
       const trimmed = input.trim()
       if (trimmed && !prompting) {
         setInput("")
+        setSelectedIndex(0)
         if (textareaRef.current) textareaRef.current.style.height = "auto"
         onSend(trimmed)
       }
@@ -112,6 +118,7 @@ export function ChatFooter({ sessionId, active, prompting, connecting, connected
 
   const handleInputChange = (value: string) => {
     setInput(value)
+    setSelectedIndex(0)
     if (textareaRef.current) {
       textareaRef.current.style.height = "auto"
       textareaRef.current.style.height = `${Math.min(textareaRef.current.scrollHeight, 200)}px`
@@ -129,6 +136,7 @@ export function ChatFooter({ sessionId, active, prompting, connecting, connected
           <div className="max-w-3xl mx-auto rounded-md border border-[var(--t-border)] bg-[var(--t-surface)] shadow-lg overflow-hidden">
             {filteredCommands.map((cmd, i) => (
               <button
+                type="button"
                 key={cmd.name}
                 onMouseDown={(e) => {
                   e.preventDefault()
@@ -172,13 +180,14 @@ export function ChatFooter({ sessionId, active, prompting, connecting, connected
                 : prompting
                   ? "Agent is thinking..."
                   : !connected
-                    ? "Send a message to reconnect..."
-                    : "Send a message..."
+                    ? `Send a message to reconnect${tokenHint ? ` (${tokenHint})` : ""}...`
+                    : `Send a message${tokenHint ? ` (${tokenHint})` : ""}...`
           }
           spellCheck={false}
         />
         {active && prompting ? (
           <button
+            type="button"
             onClick={onCancel}
             className="shrink-0 rounded-md bg-[var(--t-red)]/15 p-2 text-[var(--t-red)] hover:bg-[var(--t-red)]/25 transition-colors cursor-pointer"
             title="Stop (Esc)"

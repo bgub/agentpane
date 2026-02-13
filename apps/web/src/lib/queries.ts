@@ -1,12 +1,13 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
 import { api } from "./api"
-import type { Session } from "./types"
+import type { Session, SessionTokenUsage } from "./types"
 
 // --- Query keys ---
 
 export const queryKeys = {
   sessions: ["sessions"] as const,
   conversation: (id: string) => ["conversation", id] as const,
+  tokenUsage: (id: string) => ["tokenUsage", id] as const,
   gitBranch: (cwd: string) => ["gitBranch", cwd] as const,
 }
 
@@ -45,6 +46,19 @@ export function useGitBranchQuery(cwd: string | undefined) {
       return data.branch
     },
     enabled: !!cwd,
+  })
+}
+
+export function useSessionTokenUsageQuery(sessionId: string | undefined) {
+  return useQuery({
+    queryKey: queryKeys.tokenUsage(sessionId ?? ""),
+    queryFn: async () => {
+      const res = await api.sessions.tokenUsage(sessionId!)
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      return res.json() as Promise<SessionTokenUsage>
+    },
+    enabled: !!sessionId,
+    staleTime: Infinity,
   })
 }
 

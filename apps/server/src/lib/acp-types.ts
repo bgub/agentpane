@@ -65,6 +65,11 @@ export const appendOutput = (terminal: TerminalState, chunk: string) => {
   }
 }
 
+export const estimateTokenCount = (text: string): number => {
+  if (!text) return 0
+  return Math.ceil(text.length / 4)
+}
+
 export const getTerminal = (
   conn: AgentConnection,
   terminalId: string

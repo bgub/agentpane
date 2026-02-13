@@ -13,6 +13,7 @@ import { resolveProviderBin, PROVIDERS } from "./providers.js"
 import {
   type AgentConnection,
   type SubscribeResult,
+  estimateTokenCount,
   formatHistory,
   requireConnection,
 } from "./acp-types.js"
@@ -321,7 +322,13 @@ export class AcpClient extends Context.Tag("@agentpane/AcpClient")<
           // Create user turn + block in DB
           const userTurn = yield* repo.addTurn(sessionId, "user").pipe(Effect.orDie)
           yield* repo.addMessageBlock(userTurn.id, "text", content).pipe(Effect.orDie)
-          yield* repo.completeTurn(userTurn.id, "end_turn").pipe(Effect.orDie)
+          const userTokens = estimateTokenCount(content)
+          yield* repo.completeTurn(userTurn.id, "end_turn", {
+            promptTokens: userTokens,
+            completionTokens: 0,
+            totalTokens: userTokens,
+            tokenSource: "estimated",
+          }).pipe(Effect.orDie)
 
           // Create assistant turn
           const assistantTurn = yield* repo.addTurn(sessionId, "assistant").pipe(Effect.orDie)
@@ -346,12 +353,20 @@ export class AcpClient extends Context.Tag("@agentpane/AcpClient")<
           }
 
           // Fire prompt asynchronously
-          const persistCompletion = (stopReason: string) =>
+          const persistCompletion = (
+            stopReason: string,
+            tokenUsage: {
+              promptTokens: number
+              completionTokens: number
+              totalTokens: number
+              tokenSource: "provider" | "estimated"
+            }
+          ) =>
             Effect.gen(function* () {
               if (conn.accumulatedText) {
                 yield* repo.addMessageBlock(assistantTurn.id, "text", conn.accumulatedText)
               }
-              yield* repo.completeTurn(assistantTurn.id, stopReason)
+              yield* repo.completeTurn(assistantTurn.id, stopReason, tokenUsage)
             }).pipe(
               Effect.tapError((err) => Effect.logWarning(`Failed to persist completion for session ${sessionId}: ${err}`)),
               Effect.ignore
@@ -364,14 +379,34 @@ export class AcpClient extends Context.Tag("@agentpane/AcpClient")<
             })
             .then(async (response) => {
               const reason = response.stopReason || "end_turn"
-              await runPromise(persistCompletion(reason))
+              const usage = response.usage
+              const promptTokens = usage?.inputTokens ?? estimateTokenCount(fullPrompt)
+              const completionTokens = usage?.outputTokens ?? estimateTokenCount(conn.accumulatedText)
+              const totalTokens = usage?.totalTokens ?? promptTokens + completionTokens
+              await runPromise(
+                persistCompletion(reason, {
+                  promptTokens,
+                  completionTokens,
+                  totalTokens,
+                  tokenSource: usage ? "provider" : "estimated",
+                })
+              )
               const b = broadcasters.get(sessionId)
               if (b) {
                 b.broadcast({ sessionUpdate: "done", stopReason: reason })
               }
             })
             .catch(async (err) => {
-              await runPromise(persistCompletion("error"))
+              const promptTokens = estimateTokenCount(fullPrompt)
+              const completionTokens = estimateTokenCount(conn.accumulatedText)
+              await runPromise(
+                persistCompletion("error", {
+                  promptTokens,
+                  completionTokens,
+                  totalTokens: promptTokens + completionTokens,
+                  tokenSource: "estimated",
+                })
+              )
               const b = broadcasters.get(sessionId)
               if (b) {
                 b.broadcast({ sessionUpdate: "error", message: String(err) })

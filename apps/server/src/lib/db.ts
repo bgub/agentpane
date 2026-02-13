@@ -36,9 +36,25 @@ const migrations = Effect.gen(function* () {
       session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
       role TEXT NOT NULL CHECK(role IN ('user', 'assistant')),
       stop_reason TEXT,
+      prompt_tokens INTEGER,
+      completion_tokens INTEGER,
+      total_tokens INTEGER,
+      token_source TEXT,
       created_at INTEGER NOT NULL
     )
   `
+  yield* sql`ALTER TABLE turns ADD COLUMN prompt_tokens INTEGER`.pipe(
+    Effect.catchAll(() => Effect.void)
+  )
+  yield* sql`ALTER TABLE turns ADD COLUMN completion_tokens INTEGER`.pipe(
+    Effect.catchAll(() => Effect.void)
+  )
+  yield* sql`ALTER TABLE turns ADD COLUMN total_tokens INTEGER`.pipe(
+    Effect.catchAll(() => Effect.void)
+  )
+  yield* sql`ALTER TABLE turns ADD COLUMN token_source TEXT`.pipe(
+    Effect.catchAll(() => Effect.void)
+  )
   yield* sql`
     CREATE INDEX IF NOT EXISTS idx_turns_session ON turns(session_id, id)
   `

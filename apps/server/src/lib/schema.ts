@@ -14,6 +14,10 @@ export class Turn extends Schema.Class<Turn>("Turn")({
   session_id: Schema.String,
   role: Schema.Literal("user", "assistant"),
   stop_reason: Schema.NullOr(Schema.String),
+  prompt_tokens: Schema.NullOr(Schema.Number),
+  completion_tokens: Schema.NullOr(Schema.Number),
+  total_tokens: Schema.NullOr(Schema.Number),
+  token_source: Schema.NullOr(Schema.String),
   created_at: Schema.Number,
 }) {}
 

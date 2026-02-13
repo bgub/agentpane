@@ -131,9 +131,11 @@ export default function ChatView({
           dispatch({ type: 'SSE_DONE' })
           patchSession({ prompting: false })
           queryClient.invalidateQueries({ queryKey: queryKeys.conversation(sessionId) })
+          queryClient.invalidateQueries({ queryKey: queryKeys.tokenUsage(sessionId) })
         } else if (eventType === "error") {
           dispatch({ type: 'SSE_ERROR', message: `Error: ${data.message}` })
           patchSession({ prompting: false })
+          queryClient.invalidateQueries({ queryKey: queryKeys.tokenUsage(sessionId) })
         } else if (eventType === "disconnected") {
           dispatch({ type: 'SSE_DISCONNECTED' })
           patchSession({ connected: false, prompting: false })
@@ -154,7 +156,7 @@ export default function ChatView({
 
   return (
     <div ref={scrollRef} className="h-full overflow-y-auto flex flex-col-reverse">
-      <div className="max-w-3xl mx-auto px-5 py-6 space-y-1">
+      <div className="max-w-3xl w-full mx-auto px-5 py-6 space-y-1">
         {allTurns.map((turn) => (
           <div key={turn.id}>
             {turn.role === "user" ? (
