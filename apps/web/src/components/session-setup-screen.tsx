@@ -7,15 +7,24 @@ export function SessionSetupScreen() {
   const { startSession, cancelSetup } = useSession()
   const [selectedProvider, setSelectedProvider] = useState<string | null>(null)
   const [cwdValue, setCwdValue] = useState("~")
+  const [error, setError] = useState<string | null>(null)
+  const [starting, setStarting] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
     inputRef.current?.focus()
   }, [])
 
-  const handleStart = () => {
-    if (!selectedProvider) return
-    startSession(selectedProvider, cwdValue.trim() || "~")
+  const handleStart = async () => {
+    if (!selectedProvider || starting) return
+    setError(null)
+    setStarting(true)
+    try {
+      await startSession(selectedProvider, cwdValue.trim() || "~")
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to start session")
+      setStarting(false)
+    }
   }
 
   const handleKeyDown = (e: KeyboardEvent<HTMLInputElement>) => {
@@ -78,16 +87,22 @@ export function SessionSetupScreen() {
             </div>
           </div>
 
+          {error && (
+            <div className="rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-400">
+              {error}
+            </div>
+          )}
+
           <button
             onClick={handleStart}
-            disabled={!selectedProvider}
+            disabled={!selectedProvider || starting}
             className={`w-full rounded-lg py-2.5 text-sm font-medium transition-all ${
-              selectedProvider
+              selectedProvider && !starting
                 ? "bg-[var(--t-accent)] text-[var(--t-bg)] hover:brightness-110 cursor-pointer"
                 : "bg-[var(--t-border)] text-[var(--t-dim)] cursor-not-allowed"
             }`}
           >
-            Start session
+            {starting ? "Starting..." : "Start session"}
           </button>
         </div>
       </div>

@@ -192,7 +192,7 @@ export class ConnectionManager extends Context.Tag("@agentpane/ConnectionManager
             stream
           )
 
-          yield* Effect.tryPromise({
+          const initResponse = yield* Effect.tryPromise({
             try: () =>
               clientConnection.initialize({
                 protocolVersion: PROTOCOL_VERSION,
@@ -212,6 +212,10 @@ export class ConnectionManager extends Context.Tag("@agentpane/ConnectionManager
             },
           })
 
+          // Capture auth methods for better error messages if newSession fails
+          const authMethods = (initResponse as Record<string, unknown>).authMethods as
+            | Array<{ id: string; name: string; description?: string }> | undefined
+
           const sessionResponse = yield* Effect.tryPromise({
             try: () =>
               clientConnection.newSession({
@@ -220,6 +224,17 @@ export class ConnectionManager extends Context.Tag("@agentpane/ConnectionManager
               }),
             catch: (err) => {
               proc.kill()
+              const msg = err instanceof Error ? err.message : String(err)
+              const isAuthError = msg.includes("Authentication required") ||
+                (err as { code?: number }).code === -32000
+              if (isAuthError) {
+                const hint = authMethods?.[0]?.description
+                return new AcpConnectionError({
+                  message: hint
+                    ? `Authentication required — ${hint}`
+                    : `Authentication required for ${providerName}`,
+                })
+              }
               return new AcpConnectionError({
                 message: `Failed to create agent session: ${err}`,
               })

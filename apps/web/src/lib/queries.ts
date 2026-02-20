@@ -69,7 +69,10 @@ export function useStartSessionMutation() {
   return useMutation({
     mutationFn: async ({ agentType, cwd }: { agentType: string; cwd: string }) => {
       const res = await api.sessions.create({ agent_type: agentType, cwd })
-      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({})) as { error?: string }
+        throw new Error(body.error ?? `HTTP ${res.status}`)
+      }
       return res.json() as Promise<Session>
     },
     onSuccess: (session) => {
