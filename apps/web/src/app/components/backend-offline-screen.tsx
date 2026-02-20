@@ -1,5 +1,3 @@
-"use client"
-
 import { Terminal, RefreshCw } from "lucide-react"
 import { useSession } from "./session-provider"
 

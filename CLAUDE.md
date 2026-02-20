@@ -1,27 +1,30 @@
 # AgentPane
 
-Web UI for AI coding agents. Users visit [agentpane.dev](https://agentpane.dev), run `npx agentpane` locally, and the webapp connects to their local server to manage agent sessions. The frontend is deployed on Vercel; the backend runs on the user's machine (spawning ACP agent subprocesses, managing SQLite state, and streaming responses via SSE).
+Web UI for AI coding agents. `npx agentpane` starts a local server on port 3456 that serves both the API and the UI from a single process. No separate frontend deployment — everything runs locally.
 
 Communication with agents uses ACP (Agent Client Protocol) — JSON-RPC 2.0 over stdio.
 
 ## Quick Start
 
 ```sh
-npx agentpane          # starts local server on port 3456
-# then open https://agentpane.dev
+npx agentpane          # starts server + UI on http://localhost:3456
 ```
 
-For development: `pnpm dev` starts both server and web via Turbo.
+For development: `pnpm dev` starts both Vite dev server (port 6767) and Hono API server (port 3456) via Turbo. The Vite dev server proxies `/api` requests to localhost:3456.
 
 ## Tech Stack
 
 - **Monorepo:** Turborepo + pnpm workspaces
-- **Backend (`apps/server`):** Hono + Effect.ts services/layers, standalone Node.js server on port 3456. Published to npm as `agentpane`.
-- **Frontend (`apps/web`):** Next.js 16, React 19, Tailwind CSS 4. Deployed to Vercel at [agentpane.dev](https://agentpane.dev).
+- **Backend (`apps/server`):** Hono + Effect.ts services/layers, Node.js server on port 3456. Published to npm as `agentpane`. Serves both API and static frontend.
+- **Frontend (`apps/web`):** Vite SPA, React 19, Tailwind CSS 4. Built as static assets, served by the backend.
 - **Database:** SQLite via `@effect/sql-sqlite-node` + `better-sqlite3` at `data/agentpane.db`
 - **ACP:** `@agentclientprotocol/sdk` + `@zed-industries/claude-code-acp`
 
 ## Architecture
+
+### Unified Server
+
+The backend serves both the API (`/api/*`) and the frontend (static files from `web/` directory). In production (`npx agentpane`), `apps/server/web/` contains the pre-built Vite output. In development, Vite runs its own dev server with HMR and proxies API calls to the backend.
 
 ### Backend (`apps/server/`)
 
@@ -35,7 +38,7 @@ Standalone Hono HTTP server with Effect.ts service layers composed into `Managed
 - `src/lib/runtime.ts` — `AppRuntime = ManagedRuntime.make(AcpClient.layer | SessionRepo.layer | SqliteLive)`
 - `src/lib/providers.ts` — Agent provider config (claude-code, codex)
 - `src/routes/sessions.ts` — All Hono route handlers
-- `src/index.ts` — Entry point, Hono app + `serve()` on port 3456
+- `src/index.ts` — Entry point, Hono app + `serve()` on port 3456 + serveStatic for frontend
 
 ### API Routes (all in `apps/server/src/routes/sessions.ts`)
 
@@ -50,12 +53,14 @@ Standalone Hono HTTP server with Effect.ts service layers composed into `Managed
 
 ### Frontend (`apps/web/`)
 
-Pure UI — no backend dependencies (no Effect, no SQLite, no ACP SDK).
+Vite SPA — pure UI, no backend dependencies (no Effect, no SQLite, no ACP SDK). Same-origin with the API, no auth tokens or CORS needed.
 
-- `src/lib/api.ts` — Backend API client (all fetch calls to `http://localhost:3456`)
-- `src/app/components/session-layout.tsx` — Orchestrator: sidebar + chat views + setup mode
+- `src/main.tsx` — App entry point (replaces Next.js layout.tsx + page.tsx)
+- `src/lib/api.ts` — Backend API client (relative URLs, plain fetch — no auth)
+- `src/app/components/session-provider.tsx` — Session state management
+- `src/app/components/layout-provider.tsx` — Multi-pane layout state
 - `src/app/components/sidebar.tsx` — Session list with Active/History sections, status dots
-- `src/app/components/chat-view.tsx` — Chat display, always-on SSE, prompt input, connect/disconnect button
+- `src/app/components/chat-view/index.tsx` — Chat display, always-on SSE, prompt input
 - `src/app/components/providers.ts` — Provider info for UI display
 
 ## Key Patterns
@@ -70,6 +75,7 @@ Pure UI — no backend dependencies (no Effect, no SQLite, no ACP SDK).
 - Session-level broadcasters (`Map<sessionId, EventBroadcaster>`) survive agent disconnects
 - `subscribe()` always succeeds (no `AcpConnectionError`), uses session-level broadcaster
 - `connect()` broadcasts `"connected"` event; `disconnect()`/crash broadcasts `"disconnected"`
+- No auth or CORS middleware — everything is same-origin
 
 ### Frontend
 
@@ -78,6 +84,13 @@ Pure UI — no backend dependencies (no Effect, no SQLite, no ACP SDK).
 - Top bar has connect/disconnect toggle button; submitting a prompt auto-reconnects if disconnected
 - Setup mode lives in `SessionLayout`, not `ChatView` — no DB session until user clicks Start
 - Sidebar splits sessions into Active (connected, with status dots) and History (disconnected, muted)
+- No auth tokens — API calls use plain `fetch` with relative URLs
+
+### Build Pipeline
+
+- `pnpm build` — Turbo builds `@agentpane/web` first (Vite → `apps/web/dist/`), then server (`tsc` + copies `../web/dist` → `apps/server/web/`)
+- `apps/server/web/` is a build artifact (gitignored), included in npm publish via `files` field
+- `node apps/server/bin/agentpane.js` — single process serves everything on :3456
 
 <!-- effect-solutions:start -->
 ## Effect Best Practices

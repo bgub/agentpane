@@ -1,5 +1,3 @@
-"use client"
-
 import { useState, type DragEvent } from "react"
 import { X, Columns2, PanelRightClose } from "lucide-react"
 import { DRAG_TYPES } from "@/lib/constants"

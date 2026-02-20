@@ -2,7 +2,7 @@
   "$schema": "https://turborepo.dev/schema.json",
   "tasks": {
     "dev": { "persistent": true, "cache": false },
-    "build": { "dependsOn": ["^build"], "outputs": [".next/**", "dist/**"] },
+    "build": { "dependsOn": ["^build"], "outputs": ["dist/**", "web/**"] },
     "typecheck": {}
   }
 }

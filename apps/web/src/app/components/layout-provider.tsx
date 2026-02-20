@@ -1,5 +1,3 @@
-"use client"
-
 import { createContext, useContext, useState, useEffect, useRef, type ReactNode } from "react"
 import { MAX_PANES, type Pane, type LayoutState } from "@/lib/layout-types"
 import { useSession } from "./session-provider"
@@ -85,65 +83,66 @@ function evenSizes(count: number): number[] {
   return Array.from({ length: count }, () => 100 / count)
 }
 
-export function LayoutProvider({ children, savedLayout }: { children: ReactNode; savedLayout?: string | null }) {
+export function LayoutProvider({ children }: { children: ReactNode }) {
   const { sessions, activeSessionId, setActiveSession } = useSession()
   const sessionIds = new Set(sessions.map((s) => s.id))
 
-  const didInitFromSaved = useRef(false)
+  const [layout, setLayout] = useState<LayoutState>(() => makeDefaultLayout(undefined, "pane-default"))
 
-  const [layout, setLayout] = useState<LayoutState>(() => {
-    // Try saved layout from cookie (passed by server)
-    if (savedLayout && sessions.length > 0) {
-      const parsed = parseLayout(savedLayout, sessionIds)
-      if (parsed) {
-        didInitFromSaved.current = true
-        return parsed
-      }
-    }
-    // SSR default: connected sessions as tabs
-    if (sessions.length === 0) return makeDefaultLayout(undefined, "pane-default")
-    const connectedIds = sessions.filter((s) => s.connected).map((s) => s.id)
-    const tabIds = connectedIds.length > 0 ? connectedIds : [sessions[0].id]
-    return {
-      panes: [{
-        id: "pane-default",
-        tabSessionIds: tabIds,
-        activeTabSessionId: activeSessionId && tabIds.includes(activeSessionId) ? activeSessionId : tabIds[0],
-      }],
-      focusedPaneId: "pane-default",
-      paneSizes: [100],
-    }
-  })
-
-  const [initialized, setInitialized] = useState(didInitFromSaved.current)
+  const [initialized, setInitialized] = useState(false)
   const saveTimerRef = useRef<ReturnType<typeof setTimeout>>(null)
 
-  // Client-side init: migrate from old localStorage if no cookie was loaded
+  // Client-side init: load saved layout from backend, or migrate from old localStorage
   useEffect(() => {
     if (initialized || sessions.length === 0) return
-    try {
+    let cancelled = false
+
+    const init = async () => {
+      // Try loading from backend
+      try {
+        const res = await api.settings.get("layout")
+        if (!cancelled && res.ok) {
+          const data = await res.json() as { value?: string }
+          if (data?.value) {
+            const parsed = parseLayout(data.value, sessionIds)
+            if (parsed) {
+              setLayout(parsed)
+              setInitialized(true)
+              return
+            }
+          }
+        }
+      } catch { /* ignore */ }
+
+      if (cancelled) return
+
       // Try old localStorage key
-      const raw = localStorage.getItem(OLD_LS_KEY)
-      if (raw) {
-        const parsed = parseLayout(raw, sessionIds)
-        if (parsed) {
-          setLayout(parsed)
-          saveLayoutToBackend(parsed)
+      try {
+        const raw = localStorage.getItem(OLD_LS_KEY)
+        if (raw) {
+          const parsed = parseLayout(raw, sessionIds)
+          if (parsed) {
+            setLayout(parsed)
+            saveLayoutToBackend(parsed)
+          }
+          localStorage.removeItem(OLD_LS_KEY)
         }
-        localStorage.removeItem(OLD_LS_KEY)
-      }
-      // Try old activeSessionId key
-      const oldId = localStorage.getItem(OLD_ACTIVE_KEY)
-      if (oldId && sessionIds.has(oldId)) {
-        localStorage.removeItem(OLD_ACTIVE_KEY)
-        if (!raw) {
-          const fallback = makeDefaultLayout(oldId)
-          setLayout(fallback)
-          saveLayoutToBackend(fallback)
+        const oldId = localStorage.getItem(OLD_ACTIVE_KEY)
+        if (oldId && sessionIds.has(oldId)) {
+          localStorage.removeItem(OLD_ACTIVE_KEY)
+          if (!raw) {
+            const fallback = makeDefaultLayout(oldId)
+            setLayout(fallback)
+            saveLayoutToBackend(fallback)
+          }
         }
-      }
-    } catch { /* ignore */ }
-    setInitialized(true)
+      } catch { /* ignore */ }
+
+      setInitialized(true)
+    }
+
+    void init()
+    return () => { cancelled = true }
   }, [sessions, initialized]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Debounced save to backend

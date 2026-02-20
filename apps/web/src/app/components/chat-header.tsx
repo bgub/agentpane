@@ -1,5 +1,3 @@
-"use client"
-
 import { GitBranch, Loader2, Plug, Unplug } from "lucide-react"
 import { useGitBranchQuery } from "@/lib/queries"
 import type { ConfigOption, ConfigSelectGroup } from "./chat-view/types"

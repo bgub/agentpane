@@ -1,12 +1,9 @@
-"use client"
-
 import { useState, useEffect, type ReactNode, type DragEvent } from "react"
 import { Group, Panel, Separator, type Layout } from "react-resizable-panels"
 import { Columns2 } from "lucide-react"
 import { useSession } from "./session-provider"
 import { useLayout } from "./layout-provider"
 import { BackendOfflineScreen } from "./backend-offline-screen"
-import { BackendUnauthorizedScreen } from "./backend-unauthorized-screen"
 import { SessionSetupScreen } from "./session-setup-screen"
 import { PaneView } from "./pane-view"
 
@@ -71,14 +68,6 @@ export function PaneContainer() {
     )
   }
 
-  if (backendStatus === "unauthorized") {
-    return (
-      <div className="flex-1 min-w-0 min-h-0 flex flex-col bg-[var(--t-bg)]">
-        <BackendUnauthorizedScreen />
-      </div>
-    )
-  }
-
   if (showSetup) {
     return (
       <div className="flex-1 min-w-0 min-h-0 flex flex-col bg-[var(--t-bg)]">
@@ -131,7 +120,8 @@ export function PaneContainer() {
 
       {/* Drop zone on right edge — appears during sidebar drags, creates a new split pane */}
       {showSplitZone && (
-        <div
+        <button
+          type="button"
           onDragOver={handleSplitDragOver}
           onDragLeave={handleSplitDragLeave}
           onDrop={handleSplitDrop}
@@ -147,7 +137,7 @@ export function PaneContainer() {
             <Columns2 className="size-4" />
             {splitDropHover && <span className="text-[10px] font-medium">Split</span>}
           </div>
-        </div>
+        </button>
       )}
     </div>
   )

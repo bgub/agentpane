@@ -1,5 +1,3 @@
-"use client"
-
 import { useState, useRef, useEffect, type KeyboardEvent } from "react"
 import { Square } from "lucide-react"
 import { useSessionTokenUsageQuery } from "@/lib/queries"

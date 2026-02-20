@@ -1,5 +1,3 @@
-"use client"
-
 import { useState, useEffect, useRef, type KeyboardEvent } from "react"
 import { FolderOpen } from "lucide-react"
 import { PROVIDERS } from "./providers"

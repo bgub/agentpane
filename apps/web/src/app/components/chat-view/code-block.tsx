@@ -1,5 +1,3 @@
-"use client"
-
 import { isValidElement, useState, useEffect, useRef, type ReactNode } from "react"
 import { Check, Copy } from "lucide-react"
 import type { CodeHighlighterPlugin } from "streamdown"

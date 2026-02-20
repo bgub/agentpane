@@ -1,5 +1,3 @@
-"use client"
-
 import { useState, useReducer, useRef, useEffect } from "react"
 import { Streamdown } from "streamdown"
 import { useQueryClient } from "@tanstack/react-query"

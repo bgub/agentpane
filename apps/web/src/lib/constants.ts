@@ -1,4 +1,4 @@
-export const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3456"
+export const API_BASE = ""
 
 export const DRAG_TYPES = {
   sidebarSession: "application/x-sidebar-session",

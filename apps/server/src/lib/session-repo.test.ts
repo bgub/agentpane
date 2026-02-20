@@ -1,5 +1,5 @@
-import { describe, expect, it } from "bun:test"
-import * as SqliteBun from "@effect/sql-sqlite-bun/SqliteClient"
+import { describe, expect, it } from "vitest"
+import * as SqliteNode from "@effect/sql-sqlite-node/SqliteClient"
 import { SqlClient } from "@effect/sql/SqlClient"
 import { Effect, Layer } from "effect"
 import { SessionRepo } from "./session-repo.js"
@@ -48,7 +48,7 @@ const testSqliteLayer = Layer.effectDiscard(
       )
     `
   })
-).pipe(Layer.provideMerge(SqliteBun.layer({ filename: ":memory:" })))
+).pipe(Layer.provideMerge(SqliteNode.layer({ filename: ":memory:" })))
 
 describe("SessionRepo.persistOps", () => {
   it("rolls back entire batch when one op fails", async () => {

@@ -13,5 +13,7 @@
     "turbo": "^2",
     "typescript": "^5"
   },
-  "pnpm": {}
+  "pnpm": {
+    "onlyBuiltDependencies": ["better-sqlite3", "esbuild"]
+  }
 }

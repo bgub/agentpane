@@ -1,5 +1,3 @@
-"use client"
-
 import { useState, useEffect, useRef } from "react"
 import { useSession } from "./session-provider"
 import { api } from "@/lib/api"

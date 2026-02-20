@@ -1,5 +1,3 @@
-"use client"
-
 import { useState, useRef, useEffect, Fragment, type KeyboardEvent, type DragEvent } from "react"
 import {
   DropdownMenu,

@@ -1,4 +1,4 @@
-import * as SqliteBun from "@effect/sql-sqlite-bun/SqliteClient"
+import * as SqliteNode from "@effect/sql-sqlite-node/SqliteClient"
 import { SqlClient } from "@effect/sql/SqlClient"
 import { Effect, Layer } from "effect"
 import fs from "node:fs"
@@ -98,7 +98,7 @@ const migrations = Effect.gen(function* () {
 
 const dbPath = path.resolve(dataDir, "agentpane.db")
 
-const SqliteBaseLive = SqliteBun.layer({ filename: dbPath })
+const SqliteBaseLive = SqliteNode.layer({ filename: dbPath })
 
 export const SqliteLive = Layer.effectDiscard(migrations).pipe(
   Layer.provideMerge(SqliteBaseLive)

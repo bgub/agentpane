@@ -1,4 +1,4 @@
-import { describe, expect, it } from "bun:test"
+import { describe, expect, it } from "vitest"
 import { Cause, Effect, Layer } from "effect"
 import crypto from "node:crypto"
 import { WriteQueue } from "./write-queue.js"

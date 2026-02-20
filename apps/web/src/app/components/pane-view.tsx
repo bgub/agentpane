@@ -1,5 +1,3 @@
-"use client"
-
 import { type DragEvent } from "react"
 import { DRAG_TYPES } from "@/lib/constants"
 import { useLayout } from "./layout-provider"

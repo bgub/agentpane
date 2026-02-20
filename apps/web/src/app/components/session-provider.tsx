@@ -1,16 +1,13 @@
-"use client"
-
 import { createContext, useContext, useState, useEffect, type ReactNode } from "react"
 import { useQueryClient } from "@tanstack/react-query"
-import { api, setToken } from "@/lib/api"
+import { api } from "@/lib/api"
 import { useSessionsQuery, useStartSessionMutation, useDeleteSessionMutation, useRenameSessionMutation, queryKeys } from "@/lib/queries"
 import type { Session } from "@/lib/types"
-import type { InitialData } from "@/lib/server-api"
 
 interface SessionContextValue {
   sessions: Session[]
   activeSessionId: string | null
-  backendStatus: "checking" | "online" | "offline" | "unauthorized"
+  backendStatus: "checking" | "online" | "offline"
   healthChecking: boolean
   showSetup: boolean
 
@@ -31,33 +28,13 @@ export function useSession(): SessionContextValue {
   return ctx
 }
 
-export function SessionProvider({ children, initialData }: { children: ReactNode; initialData?: InitialData | null }) {
+export function SessionProvider({ children }: { children: ReactNode }) {
   const queryClient = useQueryClient()
-  const { data: sessions = [] } = useSessionsQuery()
+  const sessionsQuery = useSessionsQuery()
+  const sessions = sessionsQuery.data ?? []
 
-  const [activeSessionId, _setActiveSessionId] = useState<string | null>(() => {
-    if (!initialData?.sessions.length) return null
-    // Derive from saved layout so server + client agree on initial active session
-    if (initialData.layout) {
-      try {
-        const parsed = JSON.parse(initialData.layout) as {
-          focusedPaneId?: string
-          panes?: Array<{ id: string; activeTabSessionId?: string }>
-        }
-        if (Array.isArray(parsed.panes) && parsed.panes.length > 0) {
-          const focused = parsed.panes.find((p) => p.id === parsed.focusedPaneId) ?? parsed.panes[0]
-          if (focused.activeTabSessionId && initialData.sessions.some((s) => s.id === focused.activeTabSessionId)) {
-            return focused.activeTabSessionId
-          }
-        }
-      } catch { /* ignore */ }
-    }
-    const connected = initialData.sessions.find((s) => s.connected)
-    return connected?.id ?? initialData.sessions[0].id
-  })
-  const [backendStatus, setBackendStatus] = useState<"checking" | "online" | "offline" | "unauthorized">(
-    initialData ? "online" : "checking"
-  )
+  const [activeSessionId, _setActiveSessionId] = useState<string | null>(null)
+  const [backendStatus, setBackendStatus] = useState<"checking" | "online" | "offline">("checking")
   const [healthChecking, setHealthChecking] = useState(false)
   const [showSetup, setShowSetup] = useState(false)
 
@@ -71,43 +48,31 @@ export function SessionProvider({ children, initialData }: { children: ReactNode
     else localStorage.removeItem("agentpane:activeSessionId")
   }
 
-  const checkHealth = async () => {
-    setHealthChecking(true)
-    try {
-      const res = await api.health()
-      const data = await res.json()
-      if (data?.app === "agentpane") {
-        setHealthChecking(false)
-        return true
-      }
-    } catch {}
-    setBackendStatus("offline")
-    setHealthChecking(false)
-    return false
-  }
-
-  // Sync auth token on mount: URL token takes priority, then SSR token from initialData
+  // Health check on mount
   useEffect(() => {
-    const params = new URLSearchParams(window.location.search)
-    const urlToken = params.get("token")
-    if (urlToken) {
-      setToken(urlToken)
-      params.delete("token")
-      const qs = params.toString()
-      const newUrl = qs ? `${window.location.pathname}?${qs}` : window.location.pathname
-      window.history.replaceState({}, "", newUrl)
-    } else if (initialData?.authToken) {
-      setToken(initialData.authToken)
+    const runHealthCheck = async () => {
+      setHealthChecking(true)
+      try {
+        const res = await api.health()
+        const data = await res.json()
+        if (data?.app === "agentpane") {
+          setBackendStatus("online")
+          setHealthChecking(false)
+          return
+        }
+      } catch {}
+      setBackendStatus("offline")
+      setHealthChecking(false)
     }
-  }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Health check on mount when no SSR data
+    void runHealthCheck()
+  }, [])
+
   useEffect(() => {
-    if (initialData) return
-    checkHealth().then((online) => {
-      if (online) queryClient.invalidateQueries({ queryKey: queryKeys.sessions })
-    })
-  }, [initialData, checkHealth, queryClient])
+    if (sessionsQuery.isSuccess) {
+      setBackendStatus("online")
+    }
+  }, [sessionsQuery.isSuccess])
 
   // Keep activeSessionId valid and mark backend online when sessions arrive
   useEffect(() => {
@@ -124,7 +89,7 @@ export function SessionProvider({ children, initialData }: { children: ReactNode
         const res = await api.health()
         const data = await res.json()
         if (data?.app !== "agentpane") throw new Error()
-        if (backendStatus === "offline" || backendStatus === "unauthorized") {
+        if (backendStatus === "offline") {
           queryClient.invalidateQueries({ queryKey: queryKeys.sessions })
         }
       } catch {
@@ -166,9 +131,22 @@ export function SessionProvider({ children, initialData }: { children: ReactNode
   }
 
   const retryHealth = () => {
-    checkHealth().then((online) => {
-      if (online) queryClient.invalidateQueries({ queryKey: queryKeys.sessions })
-    })
+    const runHealthCheck = async () => {
+      setHealthChecking(true)
+      try {
+        const res = await api.health()
+        const data = await res.json()
+        if (data?.app === "agentpane") {
+          await queryClient.invalidateQueries({ queryKey: queryKeys.sessions })
+          setHealthChecking(false)
+          return
+        }
+      } catch {}
+      setBackendStatus("offline")
+      setHealthChecking(false)
+    }
+
+    void runHealthCheck()
   }
 
   const setActiveSession = (id: string) => {

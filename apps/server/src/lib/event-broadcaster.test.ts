@@ -1,4 +1,4 @@
-import { describe, it, expect } from "bun:test"
+import { describe, it, expect } from "vitest"
 import { EventBroadcaster } from "./event-broadcaster.js"
 
 const parseEventId = (payload: string): number => {
