@@ -1,0 +1,30 @@
+---
+title: Multi-Pane Layout
+description: Split your workspace into multiple panes and run agents side by side.
+---
+
+AgentPane supports a multi-pane layout so you can work with several agent sessions simultaneously.
+
+## Splitting Panes
+
+- **Split right** — Open a new pane to the right of the current one
+- **Split down** — Open a new pane below the current one
+
+Each pane runs its own independent session with its own agent connection and SSE event stream.
+
+## Drag and Drop
+
+Tabs can be dragged between panes. Grab a tab and drop it onto another pane to move the session there. You can also drop a tab between existing panes to create a new split.
+
+## Resizing
+
+Drag the divider between panes to resize them. Pane sizes are preserved during the session.
+
+## Sidebar
+
+The sidebar organizes sessions into two sections:
+
+- **Active** — Sessions with a connected agent, shown with a status indicator
+- **History** — Disconnected sessions, shown in a muted style
+
+Click any session in the sidebar to focus it in the current pane.

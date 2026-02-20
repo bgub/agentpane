@@ -1,0 +1,48 @@
+---
+title: Agents
+description: Supported AI coding agents and how the provider system works.
+---
+
+AgentPane communicates with AI coding agents over the **Agent Client Protocol (ACP)** — a JSON-RPC 2.0 protocol over stdio. Any agent that implements ACP can be used with AgentPane.
+
+## Supported Agents
+
+### Claude Code
+
+Anthropic's agentic coding assistant. Requires `claude-code` to be installed and an Anthropic API key configured.
+
+```sh
+npm install -g @anthropic-ai/claude-code
+```
+
+### Codex
+
+OpenAI's coding agent. Requires `codex` to be installed and an OpenAI API key configured.
+
+```sh
+npm install -g @openai/codex
+```
+
+## How Providers Work
+
+Each provider is defined with:
+
+- **Binary path** — The executable to spawn (e.g. `claude-code-acp`)
+- **Spawn arguments** — CLI flags passed to the agent
+- **Display info** — Name, short label, and description for the UI
+
+When you start a session, AgentPane:
+
+1. Spawns the agent binary as a child process with `stdio: ["pipe", "pipe", "inherit"]`
+2. Sets up an ACP connection over the agent's stdin/stdout
+3. Creates a session-level event broadcaster for SSE streaming
+4. Forwards prompts and receives responses over the JSON-RPC connection
+
+## Adding a New Agent
+
+To add support for a new ACP-compatible agent, you need to register it in two places:
+
+1. **Backend** (`apps/server/src/lib/providers.ts`) — Add the provider config with binary path and spawn args
+2. **Frontend** (`apps/web/src/components/providers.ts`) — Add display info (name, label, description)
+
+The agent must implement the ACP protocol — specifically the `conversation/sendMessage` method and related notification events.

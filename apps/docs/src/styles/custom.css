@@ -1,0 +1,12 @@
+/* Teal accent to match AgentPane's UI palette */
+:root {
+  --sl-color-accent-low: #0d3d3a;
+  --sl-color-accent: #0d7d72;
+  --sl-color-accent-high: #b4e4df;
+}
+
+:root[data-theme="light"] {
+  --sl-color-accent-low: #d1f0ed;
+  --sl-color-accent: #0d7d72;
+  --sl-color-accent-high: #053d38;
+}

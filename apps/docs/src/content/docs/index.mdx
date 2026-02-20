@@ -1,0 +1,36 @@
+---
+title: AgentPane
+description: Multi-pane web UI for AI coding agents. Run locally, talk to agents over ACP.
+template: splash
+hero:
+  tagline: A multi-pane web UI for AI coding agents. Runs locally, talks to agents over the Agent Client Protocol.
+  actions:
+    - text: Get Started
+      link: /getting-started/
+      icon: right-arrow
+    - text: View on GitHub
+      link: https://github.com/bgub/agentpane
+      icon: external
+      variant: minimal
+---
+
+import { Card, CardGrid } from "@astrojs/starlight/components";
+
+<CardGrid>
+  <Card title="Multi-Pane Layout" icon="laptop">
+    Split your workspace into multiple panes. Drag-and-drop tabs between them.
+    Run several agents side by side.
+  </Card>
+  <Card title="SSE Streaming" icon="rocket">
+    Real-time updates via Server-Sent Events. See agent output as it's generated
+    — no polling, no WebSockets.
+  </Card>
+  <Card title="Agent Client Protocol" icon="puzzle">
+    Communicates with agents over ACP (JSON-RPC 2.0 over stdio). Supports Claude
+    Code, Codex, and more.
+  </Card>
+  <Card title="Local-First" icon="seti:lock">
+    Everything runs on your machine. A single `npx agentpane` starts the server
+    and UI on port 3456. No cloud deployment needed.
+  </Card>
+</CardGrid>

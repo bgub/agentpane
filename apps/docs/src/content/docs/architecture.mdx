@@ -1,0 +1,76 @@
+---
+title: Architecture
+description: How AgentPane is structured — unified server, Effect.ts backend, Vite SPA frontend.
+---
+
+## Overview
+
+AgentPane is a **Turborepo monorepo** with two main packages:
+
+- **`apps/server`** — Hono HTTP server with Effect.ts service layers
+- **`apps/web`** — Vite SPA with React 19
+
+A single process serves both the API and the pre-built frontend on port 3456. No separate frontend deployment — everything runs locally.
+
+## Unified Server
+
+```
+┌─────────────────────────────────────┐
+│          Node.js (port 3456)        │
+│                                     │
+│  ┌───────────┐  ┌────────────────┐  │
+│  │  /api/*   │  │  Static files  │  │
+│  │  (Hono)   │  │  (Vite build)  │  │
+│  └─────┬─────┘  └────────────────┘  │
+│        │                            │
+│  ┌─────┴─────────────────────────┐  │
+│  │     Effect.ts Services        │  │
+│  │  SessionRepo · AcpClient      │  │
+│  └─────┬─────────────────────────┘  │
+│        │                            │
+│  ┌─────┴─────┐  ┌───────────────┐  │
+│  │  SQLite   │  │ Agent (stdio)  │  │
+│  │  (WAL)    │  │  ACP/JSON-RPC  │  │
+│  └───────────┘  └───────────────┘  │
+└─────────────────────────────────────┘
+```
+
+## Backend Services
+
+The backend uses **Effect.ts** for dependency injection and error handling. Services are composed into a `ManagedRuntime`:
+
+| Service | Responsibility |
+|---------|---------------|
+| **SessionRepo** | CRUD for sessions, turns, and message blocks in SQLite |
+| **AcpClient** | Manages agent subprocesses, ACP connections, and session-level event broadcasters |
+| **SqliteLive** | Database connection, migrations, WAL mode, foreign keys |
+
+### Error Handling
+
+Domain errors use `Schema.TaggedError` with `httpStatus` and `httpMessage` getters. The `runEffect` bridge function maps Effect exits to HTTP responses automatically.
+
+## Frontend
+
+The frontend is a **Vite SPA** — pure UI with no backend dependencies. It communicates with the API via plain `fetch` using relative URLs (same-origin, no auth tokens).
+
+Key patterns:
+- **Always-on EventSource** — SSE connection stays open regardless of agent connection state
+- **React Compiler** — Automatic memoization, no manual `useMemo`/`useCallback`
+
+## Agent Communication
+
+AgentPane talks to agents over the **Agent Client Protocol (ACP)** — JSON-RPC 2.0 over stdio:
+
+1. The server spawns the agent binary as a child process
+2. Communication uses newline-delimited JSON over stdin/stdout
+3. Events are broadcast to the frontend via SSE (Server-Sent Events)
+
+Session-level broadcasters survive agent disconnects, delivering connection status events to keep the UI in sync.
+
+## Database
+
+SQLite with WAL mode, stored at `data/agentpane.db` in the project root. Three tables:
+
+- **sessions** — id, name, working directory, agent type, timestamps
+- **turns** — id, session reference, role (user/assistant), stop reason
+- **message_blocks** — id, turn reference, kind, content

@@ -1,0 +1,40 @@
+---
+title: Getting Started
+description: Install AgentPane and start your first agent session.
+---
+
+## Prerequisites
+
+- **Node.js 22+** (LTS recommended)
+- An AI coding agent installed locally (e.g. [Claude Code](https://docs.anthropic.com/en/docs/claude-code))
+
+## Quick Start
+
+```sh
+npx agentpane
+```
+
+This starts a local server on **http://localhost:3456** that serves both the API and the web UI. Open it in your browser.
+
+## Your First Session
+
+1. **Choose an agent** — Select from the available providers (Claude Code, Codex) on the setup screen.
+2. **Pick a working directory** — The agent will operate in this directory.
+3. **Start chatting** — Type a prompt and the agent begins working. You'll see tool calls, file edits, and responses streamed in real time.
+
+## Development Setup
+
+To work on AgentPane itself:
+
+```sh
+git clone https://github.com/bgub/agentpane.git
+cd agentpane
+pnpm install
+pnpm dev
+```
+
+This starts:
+- **Vite dev server** on port 6767 (with HMR)
+- **Hono API server** on port 3456
+
+The Vite dev server proxies `/api` requests to the backend automatically.
