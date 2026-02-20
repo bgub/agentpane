@@ -1,31 +1,29 @@
-import { Check, X, Loader2, Terminal, FileText, Search, Brain, Pencil } from "lucide-react"
+import { Check, X, Loader2, Terminal, FileText, Search, Brain, Pencil, type LucideIcon } from "lucide-react"
 import { createElement } from "react"
 import { diffLines } from "diff"
 import type { DiffLine, FileChange } from "./types"
 
+const KIND_ICONS: Record<string, LucideIcon> = {
+  execute: Terminal, read: FileText, edit: Pencil, search: Search, think: Brain,
+}
+
 export function kindIcon(kind?: string) {
-  const cls = "size-3.5 shrink-0"
-  switch (kind) {
-    case "execute": return createElement(Terminal, { className: cls })
-    case "read": return createElement(FileText, { className: cls })
-    case "edit": return createElement(Pencil, { className: cls })
-    case "search": return createElement(Search, { className: cls })
-    case "think": return createElement(Brain, { className: cls })
-    default: return createElement("span", { className: "text-xs shrink-0" }, "\u2666")
-  }
+  const Icon = kind ? KIND_ICONS[kind] : undefined
+  if (Icon) return createElement(Icon, { className: "size-3.5 shrink-0" })
+  return createElement("span", { className: "text-xs shrink-0" }, "\u2666")
+}
+
+const STATUS_INDICATORS: Record<string, [LucideIcon, string]> = {
+  completed: [Check, "size-3.5 shrink-0 text-[var(--t-green)]"],
+  failed: [X, "size-3.5 shrink-0 text-[var(--t-red)]"],
+  in_progress: [Loader2, "size-3.5 shrink-0 animate-spin text-[var(--t-amber)]"],
+  pending: [Loader2, "size-3.5 shrink-0 animate-spin text-[var(--t-amber)]"],
 }
 
 export function statusIndicator(status?: string) {
-  if (status === "completed") return createElement(Check, { className: "size-3.5 shrink-0 text-[var(--t-green)]" })
-  if (status === "failed") return createElement(X, { className: "size-3.5 shrink-0 text-[var(--t-red)]" })
-  if (status === "in_progress" || status === "pending") return createElement(Loader2, { className: "size-3.5 shrink-0 animate-spin text-[var(--t-amber)]" })
-  return null
-}
-
-export function formatOutput(raw: unknown): string {
-  if (raw == null) return ""
-  if (typeof raw === "string") return raw
-  return JSON.stringify(raw, null, 2)
+  const entry = status ? STATUS_INDICATORS[status] : undefined
+  if (!entry) return null
+  return createElement(entry[0], { className: entry[1] })
 }
 
 // Extract readable text from various agent output formats

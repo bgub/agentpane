@@ -1,6 +1,6 @@
 import { useState, type DragEvent } from "react"
 import { X, Columns2, PanelRightClose } from "lucide-react"
-import { DRAG_TYPES } from "@/lib/constants"
+import { DRAG_TYPES, parseDragData } from "@/lib/constants"
 import { MAX_PANES } from "@/lib/layout-types"
 import { useSession } from "./session-provider"
 import { useLayout } from "./layout-provider"
@@ -40,26 +40,20 @@ export function TabBar({ paneId, tabSessionIds, activeTabSessionId, isFocused }:
     e.preventDefault()
     setDropTarget(false)
     // Tab drag between panes
-    const tabData = e.dataTransfer.getData(DRAG_TYPES.paneTab)
-    if (tabData) {
-      try {
-        const data = JSON.parse(tabData) as { fromPaneId: string; sessionId: string }
-        if (data.fromPaneId === paneId) {
-          openSessionInPane(paneId, data.sessionId)
-        } else {
-          moveTab(data.fromPaneId, paneId, data.sessionId)
-        }
-      } catch { /* ignore */ }
+    const tab = parseDragData<{ fromPaneId: string; sessionId: string }>(e, DRAG_TYPES.paneTab)
+    if (tab) {
+      if (tab.fromPaneId === paneId) {
+        openSessionInPane(paneId, tab.sessionId)
+      } else {
+        moveTab(tab.fromPaneId, paneId, tab.sessionId)
+      }
       return
     }
     // Sidebar drag → open in this pane as new tab
-    const sidebarData = e.dataTransfer.getData(DRAG_TYPES.sidebarSession)
-    if (sidebarData) {
-      try {
-        const data = JSON.parse(sidebarData) as { sessionId: string }
-        openSessionInPane(paneId, data.sessionId)
-        focusPane(paneId)
-      } catch { /* ignore */ }
+    const sidebar = parseDragData<{ sessionId: string }>(e, DRAG_TYPES.sidebarSession)
+    if (sidebar) {
+      openSessionInPane(paneId, sidebar.sessionId)
+      focusPane(paneId)
     }
   }
 

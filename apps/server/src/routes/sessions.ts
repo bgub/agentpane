@@ -38,23 +38,20 @@ const runEffect = async <A>(
 const app = new Hono()
 
 // GET /sessions — list all sessions with connection status
-app.get("/", async (c) => {
-  const result = await AppRuntime.runPromise(
-    Effect.gen(function* () {
-      const repo = yield* SessionRepo
-      const acp = yield* AcpClient
-      const sessions = yield* repo.list()
-      const connected = acp.connectedSessionIds()
-      const prompting = acp.promptingSessionIds()
-      return sessions.map((s) => ({
-        ...s,
-        connected: connected.has(s.id),
-        prompting: prompting.has(s.id),
-      }))
-    })
-  )
-  return c.json(result)
-})
+app.get("/", async (c) => runEffect(c,
+  Effect.gen(function* () {
+    const repo = yield* SessionRepo
+    const acp = yield* AcpClient
+    const sessions = yield* repo.list()
+    const connected = acp.connectedSessionIds()
+    const prompting = acp.promptingSessionIds()
+    return sessions.map((s) => ({
+      ...s,
+      connected: connected.has(s.id),
+      prompting: prompting.has(s.id),
+    }))
+  })
+))
 
 // POST /sessions — create a new session, optionally auto-connect
 app.post("/", async (c) => {
@@ -139,12 +136,9 @@ app.delete("/:id", async (c) => {
 })
 
 // GET /sessions/:id/conversation — get full conversation history
-app.get("/:id/conversation", async (c) => {
-  const conversation = await AppRuntime.runPromise(
-    Effect.flatMap(SessionRepo, (repo) => repo.getConversation(c.req.param("id")))
-  )
-  return c.json(conversation)
-})
+app.get("/:id/conversation", async (c) => runEffect(c,
+  Effect.flatMap(SessionRepo, (repo) => repo.getConversation(c.req.param("id")))
+))
 
 // GET /sessions/:id/token-usage — aggregate token usage for the session
 app.get("/:id/token-usage", async (c) => runEffect(c,
@@ -165,10 +159,10 @@ app.post("/:id/permission", async (c) => {
   const requestId = asNonEmptyString(body.requestId)
   const optionId = asNonEmptyString(body.optionId)
   if (!requestId || !optionId) return badRequest(c, "requestId and optionId are required")
-  return runEffect(c, Effect.gen(function* () {
-    yield* (yield* AcpClient).respondToPermission(c.req.param("id"), requestId, optionId)
-    return { ok: true }
-  }))
+  await AppRuntime.runPromise(
+    Effect.flatMap(AcpClient, (acp) => acp.respondToPermission(c.req.param("id"), requestId, optionId))
+  )
+  return c.body(null, 204)
 })
 
 // GET /sessions/:id/commands — get available slash commands

@@ -1,5 +1,5 @@
 import { type DragEvent } from "react"
-import { DRAG_TYPES } from "@/lib/constants"
+import { DRAG_TYPES, parseDragData } from "@/lib/constants"
 import { useLayout } from "./layout-provider"
 import { TabBar } from "./tab-bar"
 import { ChatHeader } from "./chat-header"
@@ -26,13 +26,10 @@ export function PaneView({ paneId }: PaneViewProps) {
   }
 
   const handlePaneDrop = (e: DragEvent) => {
-    const raw = e.dataTransfer.getData(DRAG_TYPES.sidebarSession)
-    if (!raw) return
+    const data = parseDragData<{ sessionId: string }>(e, DRAG_TYPES.sidebarSession)
+    if (!data) return
     e.preventDefault()
-    try {
-      const data = JSON.parse(raw) as { sessionId: string }
-      openSessionInPane(paneId, data.sessionId)
-    } catch { /* ignore */ }
+    openSessionInPane(paneId, data.sessionId)
   }
 
   return (

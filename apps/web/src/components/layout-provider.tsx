@@ -3,9 +3,6 @@ import { MAX_PANES, type Pane, type LayoutState } from "@/lib/layout-types"
 import { useSession } from "./session-provider"
 import { api } from "@/lib/api"
 
-const OLD_LS_KEY = "agentpane:layout"
-const OLD_ACTIVE_KEY = "agentpane:activeSessionId"
-
 interface LayoutContextValue {
   layout: LayoutState
   splitPane: (paneId: string) => void
@@ -75,10 +72,6 @@ function parseLayout(raw: string, sessionIds: Set<string>): LayoutState | null {
   return null
 }
 
-function saveLayoutToBackend(layout: LayoutState) {
-  api.settings.set("layout", JSON.stringify(layout)).catch(() => {})
-}
-
 function evenSizes(count: number): number[] {
   return Array.from({ length: count }, () => 100 / count)
 }
@@ -92,13 +85,12 @@ export function LayoutProvider({ children }: { children: ReactNode }) {
   const [initialized, setInitialized] = useState(false)
   const saveTimerRef = useRef<ReturnType<typeof setTimeout>>(null)
 
-  // Client-side init: load saved layout from backend, or migrate from old localStorage
+  // Client-side init: load saved layout from backend
   useEffect(() => {
     if (initialized || sessions.length === 0) return
     let cancelled = false
 
     const init = async () => {
-      // Try loading from backend
       try {
         const res = await api.settings.get("layout")
         if (!cancelled && res.ok) {
@@ -114,31 +106,7 @@ export function LayoutProvider({ children }: { children: ReactNode }) {
         }
       } catch { /* ignore */ }
 
-      if (cancelled) return
-
-      // Try old localStorage key
-      try {
-        const raw = localStorage.getItem(OLD_LS_KEY)
-        if (raw) {
-          const parsed = parseLayout(raw, sessionIds)
-          if (parsed) {
-            setLayout(parsed)
-            saveLayoutToBackend(parsed)
-          }
-          localStorage.removeItem(OLD_LS_KEY)
-        }
-        const oldId = localStorage.getItem(OLD_ACTIVE_KEY)
-        if (oldId && sessionIds.has(oldId)) {
-          localStorage.removeItem(OLD_ACTIVE_KEY)
-          if (!raw) {
-            const fallback = makeDefaultLayout(oldId)
-            setLayout(fallback)
-            saveLayoutToBackend(fallback)
-          }
-        }
-      } catch { /* ignore */ }
-
-      setInitialized(true)
+      if (!cancelled) setInitialized(true)
     }
 
     void init()
@@ -150,7 +118,7 @@ export function LayoutProvider({ children }: { children: ReactNode }) {
     if (!initialized) return
     if (saveTimerRef.current) clearTimeout(saveTimerRef.current)
     saveTimerRef.current = setTimeout(() => {
-      saveLayoutToBackend(layout)
+      api.settings.set("layout", JSON.stringify(layout)).catch(() => {})
     }, 500)
     return () => { if (saveTimerRef.current) clearTimeout(saveTimerRef.current) }
   }, [layout, initialized])
@@ -326,32 +294,15 @@ export function LayoutProvider({ children }: { children: ReactNode }) {
   }
 
   const openSessionInFocusedPane = (sessionId: string) => {
-    setLayout((prev) => {
-      const paneId = prev.focusedPaneId
-      const panes = prev.panes.map((p) => {
-        if (p.id !== paneId) return p
-        if (p.tabSessionIds.includes(sessionId)) {
-          return { ...p, activeTabSessionId: sessionId }
-        }
-        return { ...p, tabSessionIds: [...p.tabSessionIds, sessionId], activeTabSessionId: sessionId }
-      })
-      return { ...prev, panes }
-    })
+    openSessionInPane(layout.focusedPaneId, sessionId)
   }
 
   const openSessionInNewPane = (sessionId: string) => {
+    if (layout.panes.length >= MAX_PANES) {
+      openSessionInPane(layout.focusedPaneId, sessionId)
+      return
+    }
     setLayout((prev) => {
-      if (prev.panes.length >= MAX_PANES) {
-        // At max panes — fall back to opening in focused pane
-        const panes = prev.panes.map((p) => {
-          if (p.id !== prev.focusedPaneId) return p
-          if (p.tabSessionIds.includes(sessionId)) {
-            return { ...p, activeTabSessionId: sessionId }
-          }
-          return { ...p, tabSessionIds: [...p.tabSessionIds, sessionId], activeTabSessionId: sessionId }
-        })
-        return { ...prev, panes }
-      }
       const newId = newPaneId()
       const newP: Pane = {
         id: newId,

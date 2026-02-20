@@ -14,6 +14,10 @@ if (!fs.existsSync(dataDir)) {
 
 const migrations = Effect.gen(function* () {
   const sql = yield* SqlClient
+
+  const addColumn = (ddl: string) =>
+    sql.unsafe(ddl).pipe(Effect.catchAll(() => Effect.void))
+
   yield* sql`PRAGMA journal_mode = WAL`
   yield* sql`PRAGMA busy_timeout = 5000`
   yield* sql`PRAGMA foreign_keys = ON`
@@ -27,9 +31,7 @@ const migrations = Effect.gen(function* () {
       created_at INTEGER NOT NULL
     )
   `
-  yield* sql`ALTER TABLE sessions ADD COLUMN agent_type TEXT NOT NULL DEFAULT 'claude-code'`.pipe(
-    Effect.catchAll(() => Effect.void)
-  )
+  yield* addColumn("ALTER TABLE sessions ADD COLUMN agent_type TEXT NOT NULL DEFAULT 'claude-code'")
   yield* sql`
     CREATE TABLE IF NOT EXISTS turns (
       id TEXT PRIMARY KEY,
@@ -43,18 +45,10 @@ const migrations = Effect.gen(function* () {
       created_at INTEGER NOT NULL
     )
   `
-  yield* sql`ALTER TABLE turns ADD COLUMN prompt_tokens INTEGER`.pipe(
-    Effect.catchAll(() => Effect.void)
-  )
-  yield* sql`ALTER TABLE turns ADD COLUMN completion_tokens INTEGER`.pipe(
-    Effect.catchAll(() => Effect.void)
-  )
-  yield* sql`ALTER TABLE turns ADD COLUMN total_tokens INTEGER`.pipe(
-    Effect.catchAll(() => Effect.void)
-  )
-  yield* sql`ALTER TABLE turns ADD COLUMN token_source TEXT`.pipe(
-    Effect.catchAll(() => Effect.void)
-  )
+  yield* addColumn("ALTER TABLE turns ADD COLUMN prompt_tokens INTEGER")
+  yield* addColumn("ALTER TABLE turns ADD COLUMN completion_tokens INTEGER")
+  yield* addColumn("ALTER TABLE turns ADD COLUMN total_tokens INTEGER")
+  yield* addColumn("ALTER TABLE turns ADD COLUMN token_source TEXT")
   yield* sql`
     CREATE INDEX IF NOT EXISTS idx_turns_session ON turns(session_id, id)
   `

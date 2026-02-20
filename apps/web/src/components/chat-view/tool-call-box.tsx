@@ -5,7 +5,6 @@ import type { ToolCallState, PermissionOption, DiffLine } from "./types"
 import {
   kindIcon,
   statusIndicator,
-  formatOutput,
   extractOutputText,
   extractCommand,
   parseExitPlanMode,
@@ -13,6 +12,12 @@ import {
   parseEditChanges,
   computeLineDiff,
 } from "./utils"
+
+function formatOutput(raw: unknown): string {
+  if (raw == null) return ""
+  if (typeof raw === "string") return raw
+  return JSON.stringify(raw, null, 2)
+}
 import { api } from "@/lib/api"
 import { markdownPlugins, markdownComponents } from "./markdown"
 
