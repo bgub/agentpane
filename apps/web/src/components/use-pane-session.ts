@@ -46,36 +46,36 @@ export function usePaneSession(sessionId: string | undefined): PaneSessionState 
     setAvailableCommands([])
   }, [sessionId])
 
-  const connectAgent = async () => {
-    if (!activeSession || connecting) return
+  // Returns true if connected successfully, false on error
+  const attemptConnect = async (session: Session): Promise<boolean> => {
     setConnecting(true)
     try {
-      const res = await api.sessions.connect(activeSession.id, {
-        agent_type: activeSession.agent_type,
-        cwd: activeSession.cwd,
+      const res = await api.sessions.connect(session.id, {
+        agent_type: session.agent_type,
+        cwd: session.cwd,
       })
       if (!res.ok) {
         const err = await res.json().catch(() => ({ error: "Connection failed" }))
         setPromptError({ message: `Error: ${err.error}`, ts: Date.now() })
+        return false
       }
+      return true
     } catch {
       setPromptError({ message: "Error: Failed to connect agent", ts: Date.now() })
+      return false
     } finally {
       setConnecting(false)
     }
   }
 
+  const connectAgent = async () => {
+    if (!activeSession || connecting) return
+    await attemptConnect(activeSession)
+  }
+
   const disconnectAgent = async () => {
     if (!activeSession) return
     await api.sessions.disconnect(activeSession.id).catch(() => {})
-  }
-
-  const onConfigOptionsChange = (opts: ConfigOption[]) => {
-    setConfigOptions(opts)
-  }
-
-  const onAvailableCommandsChange = (cmds: AvailableCommand[]) => {
-    setAvailableCommands(cmds)
   }
 
   const setConfigOption = async (configId: string, value: string) => {
@@ -108,24 +108,8 @@ export function usePaneSession(sessionId: string | undefined): PaneSessionState 
     setLastSentPrompt({ text, ts: Date.now() })
 
     if (!connected) {
-      setConnecting(true)
-      try {
-        const res = await api.sessions.connect(activeSession.id, {
-          agent_type: activeSession.agent_type,
-          cwd: activeSession.cwd,
-        })
-        if (!res.ok) {
-          const err = await res.json().catch(() => ({ error: "Connection failed" }))
-          setPromptError({ message: `Error: ${err.error}`, ts: Date.now() })
-          setConnecting(false)
-          return
-        }
-      } catch {
-        setPromptError({ message: "Error: Failed to reconnect agent", ts: Date.now() })
-        setConnecting(false)
-        return
-      }
-      setConnecting(false)
+      const ok = await attemptConnect(activeSession)
+      if (!ok) return
     }
 
     try {
@@ -153,7 +137,7 @@ export function usePaneSession(sessionId: string | undefined): PaneSessionState 
     sendPrompt,
     cancelPrompt,
     setConfigOption,
-    onConfigOptionsChange,
-    onAvailableCommandsChange,
+    onConfigOptionsChange: setConfigOptions,
+    onAvailableCommandsChange: setAvailableCommands,
   }
 }

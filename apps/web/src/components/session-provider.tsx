@@ -48,23 +48,24 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     else localStorage.removeItem("agentpane:activeSessionId")
   }
 
+  const runHealthCheck = async (onOnline?: () => void) => {
+    setHealthChecking(true)
+    try {
+      const res = await api.health()
+      const data = await res.json()
+      if (data?.app === "agentpane") {
+        setBackendStatus("online")
+        onOnline?.()
+        setHealthChecking(false)
+        return
+      }
+    } catch {}
+    setBackendStatus("offline")
+    setHealthChecking(false)
+  }
+
   // Health check on mount
   useEffect(() => {
-    const runHealthCheck = async () => {
-      setHealthChecking(true)
-      try {
-        const res = await api.health()
-        const data = await res.json()
-        if (data?.app === "agentpane") {
-          setBackendStatus("online")
-          setHealthChecking(false)
-          return
-        }
-      } catch {}
-      setBackendStatus("offline")
-      setHealthChecking(false)
-    }
-
     void runHealthCheck()
   }, [])
 
@@ -131,22 +132,9 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   }
 
   const retryHealth = () => {
-    const runHealthCheck = async () => {
-      setHealthChecking(true)
-      try {
-        const res = await api.health()
-        const data = await res.json()
-        if (data?.app === "agentpane") {
-          await queryClient.invalidateQueries({ queryKey: queryKeys.sessions })
-          setHealthChecking(false)
-          return
-        }
-      } catch {}
-      setBackendStatus("offline")
-      setHealthChecking(false)
-    }
-
-    void runHealthCheck()
+    void runHealthCheck(() => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.sessions })
+    })
   }
 
   const setActiveSession = (id: string) => {

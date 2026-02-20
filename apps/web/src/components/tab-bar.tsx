@@ -4,7 +4,7 @@ import { DRAG_TYPES } from "@/lib/constants"
 import { MAX_PANES } from "@/lib/layout-types"
 import { useSession } from "./session-provider"
 import { useLayout } from "./layout-provider"
-import type { Session } from "@/lib/types"
+import { StatusDot } from "./status-dot"
 
 interface TabBarProps {
   paneId: string
@@ -63,15 +63,6 @@ export function TabBar({ paneId, tabSessionIds, activeTabSessionId, isFocused }:
     }
   }
 
-  const statusDot = (session: Session | undefined) => {
-    if (session?.prompting) {
-      return <span className="shrink-0 size-1.5 rounded-full bg-[var(--t-amber)] animate-pulse" />
-    }
-    if (session?.connected) {
-      return <span className="shrink-0 size-1.5 rounded-full bg-[var(--t-green)]" />
-    }
-    return <span className="shrink-0 size-1.5 rounded-full bg-[var(--t-dim)]/40" />
-  }
 
   // Only show tab bar when there are multiple tabs OR multiple panes
   const showBar = tabSessionIds.length > 1 || layout.panes.length > 1
@@ -111,7 +102,7 @@ export function TabBar({ paneId, tabSessionIds, activeTabSessionId, isFocused }:
                   isFocused ? "bg-[var(--t-accent)]" : "bg-[var(--t-dim)]/50"
                 }`} />
               )}
-              {statusDot(session)}
+              <StatusDot session={session} size="sm" showDisconnected />
               <span className="truncate max-w-32">{session?.name ?? "Session"}</span>
               <button
                 onClick={(e) => {

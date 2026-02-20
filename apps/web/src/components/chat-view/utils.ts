@@ -149,18 +149,20 @@ export function parseToolCallBlock(block: { id: string; content: string; kind: s
 }
 
 export function mergeToolCallUpdates(blocks: { id: string; kind: string; content: string }[]) {
-  const toolCalls = new Map<string, Record<string, unknown>>()
-  const seenIds = new Set<string>()
+  // Parse all tool_call/tool_call_update blocks once, merge by toolCallId
+  const merged = new Map<string, Record<string, unknown>>()
+  const parsed = new Map<typeof blocks[number], Record<string, unknown>>()
 
   for (const b of blocks) {
     if (b.kind !== "tool_call" && b.kind !== "tool_call_update") continue
     try {
       const data = JSON.parse(b.content)
+      parsed.set(b, data)
       const id = data.toolCallId
       if (!id) continue
-      const existing = toolCalls.get(id)
+      const existing = merged.get(id)
       if (!existing) {
-        toolCalls.set(id, data)
+        merged.set(id, data)
       } else {
         if (data.title != null) existing.title = data.title
         if (data.kind != null) existing.kind = data.kind
@@ -171,27 +173,24 @@ export function mergeToolCallUpdates(blocks: { id: string; kind: string; content
     } catch { /* ignore */ }
   }
 
+  const seenIds = new Set<string>()
   return blocks
     .filter((b) => {
       if (b.kind === "tool_call_update") return false
       if (b.kind === "tool_call") {
-        try {
-          const data = JSON.parse(b.content)
-          if (data.toolCallId) {
-            if (seenIds.has(data.toolCallId)) return false
-            seenIds.add(data.toolCallId)
-          }
-        } catch { /* ignore */ }
+        const id = parsed.get(b)?.toolCallId as string | undefined
+        if (id) {
+          if (seenIds.has(id)) return false
+          seenIds.add(id)
+        }
       }
       return true
     })
     .map((b) => {
       if (b.kind === "tool_call") {
-        try {
-          const data = JSON.parse(b.content)
-          const merged = data.toolCallId ? toolCalls.get(data.toolCallId) : undefined
-          if (merged) return { ...b, content: JSON.stringify(merged) }
-        } catch { /* ignore */ }
+        const id = parsed.get(b)?.toolCallId as string | undefined
+        const m = id ? merged.get(id) : undefined
+        if (m) return { ...b, content: JSON.stringify(m) }
       }
       return b
     })

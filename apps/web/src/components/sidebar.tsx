@@ -12,6 +12,7 @@ import { PROVIDER_INFO } from "./providers"
 import { useSession } from "./session-provider"
 import { useLayout } from "./layout-provider"
 import type { Session } from "@/lib/types"
+import { StatusDot } from "./status-dot"
 
 export default function Sidebar() {
   const {
@@ -76,15 +77,6 @@ export default function Sidebar() {
     .filter((s) => !s.connected)
     .sort((a, b) => b.created_at - a.created_at)
 
-  const statusDot = (session: Session) => {
-    if (session.prompting) {
-      return <span className="shrink-0 size-2 rounded-full bg-[var(--t-amber)] animate-pulse" />
-    }
-    if (session.connected) {
-      return <span className="shrink-0 size-2 rounded-full bg-[var(--t-green)]" />
-    }
-    return null
-  }
 
   const renderSession = (session: Session, isHistory: boolean) => {
     const isOpenInAnyPane = layout.panes.some((p) => p.tabSessionIds.includes(session.id))
@@ -124,7 +116,7 @@ export default function Sidebar() {
           />
         ) : (
           <>
-            {statusDot(session)}
+            <StatusDot session={session} />
             <span className="flex-1 truncate">{session.name}</span>
             {session.agent_type && (
               <span className="shrink-0 text-[10px] font-mono font-medium tracking-wide text-[var(--t-muted)]">

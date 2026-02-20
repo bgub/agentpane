@@ -233,44 +233,44 @@ export class SessionRepo extends Context.Tag("@agentpane/SessionRepo")<
         }
       })
 
+      const applyWriteOp = (op: WriteOp): Effect.Effect<void, SqlError> =>
+        Effect.gen(function* () {
+          if (op._tag === "AddMessageBlock") {
+            const id = op.id ?? crypto.randomUUID()
+            const now = op.createdAt ?? Date.now()
+            yield* sql`
+              INSERT INTO message_blocks (id, turn_id, kind, content, created_at)
+              VALUES (${id}, ${op.turnId}, ${op.kind}, ${op.content}, ${now})
+            `
+            return
+          }
+
+          if (op._tag === "CompleteTurn") {
+            yield* sql`
+              UPDATE turns
+              SET
+                stop_reason = ${op.stopReason},
+                prompt_tokens = ${op.tokenUsage?.promptTokens ?? null},
+                completion_tokens = ${op.tokenUsage?.completionTokens ?? null},
+                total_tokens = ${op.tokenUsage?.totalTokens ?? null},
+                token_source = ${op.tokenUsage?.tokenSource ?? null}
+              WHERE id = ${op.turnId}
+            `
+            return
+          }
+
+          yield* sql`
+            UPDATE sessions
+            SET agent_session_id = ${op.agentSessionId}
+            WHERE id = ${op.sessionId}
+          `
+        })
+
       const persistOps = Effect.fn("SessionRepo.persistOps")(function* (ops: ReadonlyArray<WriteOp>) {
         if (ops.length === 0) return
 
-        const applyOp = (op: WriteOp): Effect.Effect<void, SqlError> =>
-          Effect.gen(function* () {
-            if (op._tag === "AddMessageBlock") {
-              const id = op.id ?? crypto.randomUUID()
-              const now = op.createdAt ?? Date.now()
-              yield* sql`
-                INSERT INTO message_blocks (id, turn_id, kind, content, created_at)
-                VALUES (${id}, ${op.turnId}, ${op.kind}, ${op.content}, ${now})
-              `
-              return
-            }
-
-            if (op._tag === "CompleteTurn") {
-              yield* sql`
-                UPDATE turns
-                SET
-                  stop_reason = ${op.stopReason},
-                  prompt_tokens = ${op.tokenUsage?.promptTokens ?? null},
-                  completion_tokens = ${op.tokenUsage?.completionTokens ?? null},
-                  total_tokens = ${op.tokenUsage?.totalTokens ?? null},
-                  token_source = ${op.tokenUsage?.tokenSource ?? null}
-                WHERE id = ${op.turnId}
-              `
-              return
-            }
-
-            yield* sql`
-              UPDATE sessions
-              SET agent_session_id = ${op.agentSessionId}
-              WHERE id = ${op.sessionId}
-            `
-          })
-
         yield* sql`BEGIN IMMEDIATE TRANSACTION`
-        const exit = yield* Effect.forEach(ops, applyOp, { discard: true }).pipe(Effect.exit)
+        const exit = yield* Effect.forEach(ops, applyWriteOp, { discard: true }).pipe(Effect.exit)
 
         if (exit._tag === "Success") {
           yield* sql`COMMIT`
@@ -313,41 +313,8 @@ export class SessionRepo extends Context.Tag("@agentpane/SessionRepo")<
         function* (ops: ReadonlyArray<QueuedWriteOp>) {
           if (ops.length === 0) return
 
-          const applyOp = (op: WriteOp): Effect.Effect<void, SqlError> =>
-            Effect.gen(function* () {
-              if (op._tag === "AddMessageBlock") {
-                const id = op.id ?? crypto.randomUUID()
-                const now = op.createdAt ?? Date.now()
-                yield* sql`
-                  INSERT INTO message_blocks (id, turn_id, kind, content, created_at)
-                  VALUES (${id}, ${op.turnId}, ${op.kind}, ${op.content}, ${now})
-                `
-                return
-              }
-
-              if (op._tag === "CompleteTurn") {
-                yield* sql`
-                  UPDATE turns
-                  SET
-                    stop_reason = ${op.stopReason},
-                    prompt_tokens = ${op.tokenUsage?.promptTokens ?? null},
-                    completion_tokens = ${op.tokenUsage?.completionTokens ?? null},
-                    total_tokens = ${op.tokenUsage?.totalTokens ?? null},
-                    token_source = ${op.tokenUsage?.tokenSource ?? null}
-                  WHERE id = ${op.turnId}
-                `
-                return
-              }
-
-              yield* sql`
-                UPDATE sessions
-                SET agent_session_id = ${op.agentSessionId}
-                WHERE id = ${op.sessionId}
-              `
-            })
-
           yield* sql`BEGIN IMMEDIATE TRANSACTION`
-          const exit = yield* Effect.forEach(ops, (queued) => applyOp(queued.op), { discard: true }).pipe(Effect.exit)
+          const exit = yield* Effect.forEach(ops, (queued) => applyWriteOp(queued.op), { discard: true }).pipe(Effect.exit)
 
           if (exit._tag === "Success") {
             for (const queued of ops) {
