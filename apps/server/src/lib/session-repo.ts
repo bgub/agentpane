@@ -300,11 +300,11 @@ export class SessionRepo extends Context.Tag("@agentpane/SessionRepo")<
 
         const parsed: Array<QueuedWriteOp> = []
         for (const row of rows) {
-          try {
-            parsed.push({ queueId: row.id, op: JSON.parse(row.op_json) as WriteOp })
-          } catch {
-            yield* sql`DELETE FROM write_queue_ops WHERE id = ${row.id}`
-          }
+          const result = Effect.try(() => JSON.parse(row.op_json) as WriteOp)
+          const op = yield* Effect.orElse(result, () =>
+            sql`DELETE FROM write_queue_ops WHERE id = ${row.id}`.pipe(Effect.as(null))
+          )
+          if (op) parsed.push({ queueId: row.id, op })
         }
         return parsed
       })

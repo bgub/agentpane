@@ -1,3 +1,4 @@
+import fs from "node:fs"
 import path from "node:path"
 import { Hono } from "hono"
 import { bodyLimit } from "hono/body-limit"
@@ -92,10 +93,45 @@ app.put("/api/settings/:key", async (c) => {
 
 app.route("/api/sessions", sessionsRoutes)
 
-// Serve frontend static files
-const webRoot = path.resolve(import.meta.dirname, "../web")
-app.use("/*", serveStatic({ root: webRoot }))
-app.get("/*", serveStatic({ root: webRoot, rewriteRequestPath: () => "/index.html" }))
+// In dev, Vite dev server at :6767 handles frontend + SSR; this server is API-only.
+// In production, serve static assets + SSR from the pre-built web bundle.
+if (!process.env.AGENTPANE_DEV) {
+  const clientRoot = path.resolve(import.meta.dirname, "../web/client")
+  app.use("/*", serveStatic({ root: clientRoot }))
+
+  const template = fs.readFileSync(path.resolve(clientRoot, "index.html"), "utf-8")
+  const ssrModule = await import(path.resolve(import.meta.dirname, "../web/server/entry-server.js")) as {
+    render: (data: { sessions: unknown[]; layout: string | null }) => { html: string; initialState: unknown }
+  }
+
+  app.get("/*", async (c) => {
+    try {
+      const { sessions, layout } = await AppRuntime.runPromise(
+        Effect.gen(function* () {
+          const repo = yield* SessionRepo
+          const acp = yield* AcpClient
+          const rawSessions = yield* repo.list()
+          const connected = acp.connectedSessionIds()
+          const prompting = acp.promptingSessionIds()
+          const sessions = rawSessions.map((s) => ({
+            ...s,
+            connected: connected.has(s.id),
+            prompting: prompting.has(s.id),
+          }))
+          const layout = yield* repo.getSetting("layout")
+          return { sessions, layout }
+        })
+      )
+      const { html: appHtml, initialState } = ssrModule.render({ sessions, layout })
+      const page = template
+        .replace("<!--ssr-outlet-->", appHtml)
+        .replace("<!--ssr-data-->", `<script>window.__SSR_DATA__=${JSON.stringify(initialState)}</script>`)
+      return c.html(page)
+    } catch {
+      return c.html(template)
+    }
+  })
+}
 
 const server = serve({ fetch: app.fetch, port: 3456 })
 // Prevent Node.js default 5-minute timeout from killing SSE connections

@@ -3,7 +3,7 @@ import react from "@vitejs/plugin-react"
 import tailwindcss from "@tailwindcss/vite"
 import path from "node:path"
 
-export default defineConfig({
+export default defineConfig(({ command }) => ({
   plugins: [
     react({
       babel: {
@@ -23,4 +23,9 @@ export default defineConfig({
       "/api": "http://localhost:3456",
     },
   },
-})
+  ssr: {
+    // Bundle all deps into SSR output so it runs standalone in apps/server.
+    // Only in build — in dev, ssrLoadModule handles resolution and CJS interop.
+    noExternal: command === "build",
+  },
+}))

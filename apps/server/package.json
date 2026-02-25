@@ -15,8 +15,8 @@
     "web"
   ],
   "scripts": {
-    "dev": "tsx --watch src/index.ts",
-    "build": "tsc && cp -r ../web/dist web",
+    "dev": "AGENTPANE_DEV=1 tsx --watch src/index.ts",
+    "build": "tsc && rm -rf web && cp -r ../web/dist web",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "prepublishOnly": "pnpm build",

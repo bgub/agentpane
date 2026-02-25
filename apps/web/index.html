@@ -1,13 +1,15 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" class="dark">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>AgentPane</title>
     <meta name="description" content="Web interface for AI coding agents" />
+    <link rel="stylesheet" href="/src/globals.css" />
   </head>
   <body class="antialiased">
-    <div id="root"></div>
-    <script type="module" src="/src/main.tsx"></script>
+    <div id="root"><!--ssr-outlet--></div>
+    <!--ssr-data-->
+    <script type="module" src="/src/entry-client.tsx"></script>
   </body>
 </html>

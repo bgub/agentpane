@@ -28,13 +28,21 @@ export function useSession(): SessionContextValue {
   return ctx
 }
 
-export function SessionProvider({ children }: { children: ReactNode }) {
+export function SessionProvider({
+  children,
+  initialSessions,
+  initialActiveSessionId,
+}: {
+  children: ReactNode
+  initialSessions?: Session[] | undefined
+  initialActiveSessionId?: string | null | undefined
+}) {
   const queryClient = useQueryClient()
   const sessionsQuery = useSessionsQuery()
-  const sessions = sessionsQuery.data ?? []
+  const sessions = sessionsQuery.data ?? initialSessions ?? []
 
-  const [activeSessionId, _setActiveSessionId] = useState<string | null>(null)
-  const [backendStatus, setBackendStatus] = useState<"checking" | "online" | "offline">("checking")
+  const [activeSessionId, _setActiveSessionId] = useState<string | null>(initialActiveSessionId ?? null)
+  const [backendStatus, setBackendStatus] = useState<"checking" | "online" | "offline">(initialSessions ? "online" : "checking")
   const [healthChecking, setHealthChecking] = useState(false)
   const [showSetup, setShowSetup] = useState(false)
 
@@ -64,8 +72,9 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     setHealthChecking(false)
   }
 
-  // Health check on mount
+  // Health check on mount (skip if SSR already proved backend is online)
   useEffect(() => {
+    if (initialSessions) return
     void runHealthCheck()
   }, [])
 

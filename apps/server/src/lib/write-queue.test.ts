@@ -111,9 +111,7 @@ describe("WriteQueue", () => {
     const harness = makeRepoHarness(seed)
     const testLayer = WriteQueue.layer.pipe(Layer.provide(harness.layer))
 
-    await Effect.runPromise(Effect.gen(function* () {
-      yield* WriteQueue
-    }).pipe(Effect.provide(testLayer)))
+    await Effect.runPromise(WriteQueue.pipe(Effect.provide(testLayer)))
 
     await sleep(120)
 

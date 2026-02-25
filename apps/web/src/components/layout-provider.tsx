@@ -1,5 +1,6 @@
 import { createContext, useContext, useState, useEffect, useRef, type ReactNode } from "react"
 import { MAX_PANES, type Pane, type LayoutState } from "@/lib/layout-types"
+import { newPaneId, makeDefaultLayout, parseLayout, evenSizes } from "@/lib/layout-utils"
 import { useSession } from "./session-provider"
 import { api } from "@/lib/api"
 
@@ -24,65 +25,19 @@ export function useLayout(): LayoutContextValue {
   return ctx
 }
 
-let paneCounter = 0
-function newPaneId(): string {
-  return `pane-${Date.now()}-${++paneCounter}`
-}
-
-function makeDefaultLayout(sessionId?: string, paneId?: string): LayoutState {
-  const id = paneId ?? newPaneId()
-  return {
-    panes: [{
-      id,
-      tabSessionIds: sessionId ? [sessionId] : [],
-      activeTabSessionId: sessionId ?? "",
-    }],
-    focusedPaneId: id,
-    paneSizes: [100],
-  }
-}
-
-function parseLayout(raw: string, sessionIds: Set<string>): LayoutState | null {
-  try {
-    const parsed = JSON.parse(raw) as LayoutState
-    if (!Array.isArray(parsed.panes)) return null
-    const panes = parsed.panes
-      .map((p) => {
-        const validTabs = p.tabSessionIds.filter((id: string) => sessionIds.has(id))
-        return {
-          ...p,
-          tabSessionIds: validTabs,
-          activeTabSessionId: validTabs.includes(p.activeTabSessionId)
-            ? p.activeTabSessionId
-            : validTabs[0] ?? "",
-        }
-      })
-      .filter((p: Pane) => p.tabSessionIds.length > 0)
-
-    if (panes.length > 0) {
-      const focusedPaneId = panes.some((p: Pane) => p.id === parsed.focusedPaneId)
-        ? parsed.focusedPaneId
-        : panes[0].id
-      const paneSizes = parsed.paneSizes?.length === panes.length
-        ? parsed.paneSizes
-        : panes.map(() => 100 / panes.length)
-      return { panes, focusedPaneId, paneSizes }
-    }
-  } catch { /* ignore */ }
-  return null
-}
-
-function evenSizes(count: number): number[] {
-  return Array.from({ length: count }, () => 100 / count)
-}
-
-export function LayoutProvider({ children }: { children: ReactNode }) {
+export function LayoutProvider({
+  children,
+  initialLayout,
+}: {
+  children: ReactNode
+  initialLayout?: LayoutState | null | undefined
+}) {
   const { sessions, activeSessionId, setActiveSession } = useSession()
   const sessionIds = new Set(sessions.map((s) => s.id))
 
-  const [layout, setLayout] = useState<LayoutState>(() => makeDefaultLayout(undefined, "pane-default"))
+  const [layout, setLayout] = useState<LayoutState>(() => initialLayout ?? makeDefaultLayout(undefined, "pane-default"))
 
-  const [initialized, setInitialized] = useState(false)
+  const [initialized, setInitialized] = useState(initialLayout != null)
   const saveTimerRef = useRef<ReturnType<typeof setTimeout>>(null)
 
   // Client-side init: load saved layout from backend
