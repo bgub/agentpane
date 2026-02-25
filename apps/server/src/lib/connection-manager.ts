@@ -36,7 +36,8 @@ export class ConnectionManager extends Context.Tag("@agentpane/ConnectionManager
     readonly connect: (
       sessionId: string,
       cwd: string,
-      agentType: string
+      agentType: string,
+      agentSessionId?: string | null
     ) => Effect.Effect<{ agentSessionId: string }, AcpConnectionError>
     readonly disconnect: (sessionId: string) => Effect.Effect<void>
     readonly cancel: (sessionId: string) => Effect.Effect<void>
@@ -67,6 +68,10 @@ export class ConnectionManager extends Context.Tag("@agentpane/ConnectionManager
       configId: string,
       value: string
     ) => Effect.Effect<Array<Record<string, unknown>>, AcpConnectionError>
+    readonly listAgentSessions: (
+      sessionId: string,
+      cwd?: string
+    ) => Effect.Effect<unknown, AcpConnectionError>
     readonly stats: () => ConnectionManagerStats
   }
 >() {
@@ -92,6 +97,14 @@ export class ConnectionManager extends Context.Tag("@agentpane/ConnectionManager
               content,
             }).pipe(
               Effect.tapError((err) => Effect.logWarning(`Failed to enqueue ${kind} block: ${err}`)),
+              Effect.ignore
+            )
+          ),
+        updateSessionName: (sessionId, title) =>
+          runPromise(
+            writeQueue.enqueue({ _tag: "RenameSession", sessionId, name: title }).pipe(
+              Effect.zipRight(writeQueue.flushSession(sessionId)),
+              Effect.tapError((err) => Effect.logWarning(`Failed to rename session: ${err}`)),
               Effect.ignore
             )
           ),
@@ -121,22 +134,15 @@ export class ConnectionManager extends Context.Tag("@agentpane/ConnectionManager
         conn.terminals.clear()
 
         runPromise(
-          writeQueue
-            .enqueue({
-              _tag: "UpdateAgentSessionId",
-              sessionId,
-              agentSessionId: null,
-            })
-            .pipe(
-              Effect.zipRight(writeQueue.flushSession(sessionId)),
-              Effect.tapError((err) => Effect.logWarning(`Failed to clear agent session id for ${sessionId}: ${err}`)),
-              Effect.ignore
-            )
+          writeQueue.flushSession(sessionId).pipe(
+            Effect.tapError((err) => Effect.logWarning(`Failed to flush writes for ${sessionId}: ${err}`)),
+            Effect.ignore
+          )
         )
       }
 
       const connect = Effect.fn("ConnectionManager.connect")(
-        function* (sessionId: string, cwd: string, agentType: string) {
+        function* (sessionId: string, cwd: string, agentType: string, agentSessionId?: string | null) {
           if (connections.has(sessionId)) {
             yield* disconnect(sessionId)
           }
@@ -180,7 +186,20 @@ export class ConnectionManager extends Context.Tag("@agentpane/ConnectionManager
           }
 
           const writableWeb = nodeToWebWritable(proc.stdin!)
-          const readableWeb = nodeToWebReadable(proc.stdout!)
+          const rawReadableWeb = nodeToWebReadable(proc.stdout!)
+
+          // Instrumented readable: logs stdout chunks when AGENTPANE_DEBUG_STREAM=1
+          const debugStream = process.env.AGENTPANE_DEBUG_STREAM === "1"
+          const readableWeb = debugStream
+            ? rawReadableWeb.pipeThrough(new TransformStream<Uint8Array, Uint8Array>({
+                transform(chunk, controller) {
+                  const now = performance.now().toFixed(1)
+                  console.log(`[${now}ms] stdout data: ${chunk.byteLength} bytes (session ${sessionId.slice(0, 8)})`)
+                  controller.enqueue(chunk)
+                },
+              }))
+            : rawReadableWeb
+
           const stream = ndJsonStream(
             writableWeb as unknown as WritableStream<Uint8Array>,
             readableWeb as unknown as ReadableStream<Uint8Array>
@@ -212,40 +231,72 @@ export class ConnectionManager extends Context.Tag("@agentpane/ConnectionManager
             },
           })
 
+          // Extract capabilities from init response
+          const agentCapabilities = (initResponse as Record<string, unknown>).agentCapabilities as
+            | { loadSession?: boolean; sessionCapabilities?: { list?: unknown } } | undefined
+          const supportsLoadSession = agentCapabilities?.loadSession === true
+          const supportsSessionList = agentCapabilities?.sessionCapabilities?.list != null
+
           // Capture auth methods for better error messages if newSession fails
           const authMethods = (initResponse as Record<string, unknown>).authMethods as
             | Array<{ id: string; name: string; description?: string }> | undefined
 
-          const sessionResponse = yield* Effect.tryPromise({
-            try: () =>
-              clientConnection.newSession({
-                cwd: effectiveCwd,
-                mcpServers: [],
-              }),
-            catch: (err) => {
-              proc.kill()
-              const msg = err instanceof Error ? err.message : String(err)
-              const isAuthError = msg.includes("Authentication required") ||
-                (err as { code?: number }).code === -32000
-              if (isAuthError) {
-                const hint = authMethods?.[0]?.description
-                return new AcpConnectionError({
-                  message: hint
-                    ? `Authentication required — ${hint}`
-                    : `Authentication required for ${providerName}`,
-                })
-              }
-              return new AcpConnectionError({
-                message: `Failed to create agent session: ${err}`,
-              })
-            },
-          })
+          // Try loadSession if agent supports it and we have a stored agentSessionId
+          let resolvedAgentSessionId: string | null = null
+          let sessionResponse: Record<string, unknown> | null = null
 
-          const agentSessionId = sessionResponse.sessionId
+          if (supportsLoadSession && agentSessionId) {
+            const loadResult = yield* Effect.tryPromise({
+              try: () =>
+                clientConnection.loadSession({
+                  sessionId: agentSessionId,
+                  cwd: effectiveCwd,
+                  mcpServers: [],
+                }),
+              catch: () =>
+                new AcpConnectionError({ message: "loadSession failed" }),
+            }).pipe(Effect.option)
+            if (loadResult._tag === "Some") {
+              resolvedAgentSessionId = agentSessionId
+              sessionResponse = loadResult.value as Record<string, unknown>
+              yield* Effect.logInfo(`Resumed agent session ${agentSessionId.slice(0, 8)} via loadSession`)
+            }
+          }
+
+          // Fall back to newSession if loadSession wasn't attempted or failed
+          if (!resolvedAgentSessionId) {
+            const newSessionResponse = yield* Effect.tryPromise({
+              try: () =>
+                clientConnection.newSession({
+                  cwd: effectiveCwd,
+                  mcpServers: [],
+                }),
+              catch: (err) => {
+                proc.kill()
+                const msg = err instanceof Error ? err.message : String(err)
+                const isAuthError = msg.includes("Authentication required") ||
+                  (err as { code?: number }).code === -32000
+                if (isAuthError) {
+                  const hint = authMethods?.[0]?.description
+                  return new AcpConnectionError({
+                    message: hint
+                      ? `Authentication required — ${hint}`
+                      : `Authentication required for ${providerName}`,
+                  })
+                }
+                return new AcpConnectionError({
+                  message: `Failed to create agent session: ${err}`,
+                })
+              },
+            })
+            resolvedAgentSessionId = newSessionResponse.sessionId
+            sessionResponse = newSessionResponse as unknown as Record<string, unknown>
+          }
+
           const agentConn: AgentConnection = {
             process: proc,
             connection: clientConnection,
-            agentSessionId,
+            agentSessionId: resolvedAgentSessionId!,
             prompting: false,
             currentAssistantTurnId: null,
             accumulatedText: "",
@@ -253,8 +304,10 @@ export class ConnectionManager extends Context.Tag("@agentpane/ConnectionManager
             pendingPermissions: new Map(),
             cwd: effectiveCwd,
             cleaned: false,
-            configOptions: (sessionResponse as Record<string, unknown>).configOptions as Array<Record<string, unknown>> ?? [],
-            availableCommands: (sessionResponse as Record<string, unknown>).availableCommands as Array<Record<string, unknown>> ?? [],
+            configOptions: sessionResponse?.configOptions as Array<Record<string, unknown>> ?? [],
+            availableCommands: sessionResponse?.availableCommands as Array<Record<string, unknown>> ?? [],
+            supportsLoadSession,
+            supportsSessionList,
           }
           connRef.current = agentConn
           connections.set(sessionId, agentConn)
@@ -262,7 +315,7 @@ export class ConnectionManager extends Context.Tag("@agentpane/ConnectionManager
           yield* writeQueue.enqueue({
             _tag: "UpdateAgentSessionId",
             sessionId,
-            agentSessionId,
+            agentSessionId: resolvedAgentSessionId,
           })
           yield* writeQueue.flushSession(sessionId)
 
@@ -281,7 +334,7 @@ export class ConnectionManager extends Context.Tag("@agentpane/ConnectionManager
             availableCommands: agentConn.availableCommands,
           })
 
-          return { agentSessionId }
+          return { agentSessionId: resolvedAgentSessionId! }
         }
       )
 
@@ -390,6 +443,24 @@ export class ConnectionManager extends Context.Tag("@agentpane/ConnectionManager
         }
       )
 
+      const listAgentSessions = Effect.fn("ConnectionManager.listAgentSessions")(
+        function* (sessionId: string, cwd?: string) {
+          const conn = yield* requireConnection(connections, sessionId)
+          if (!conn.supportsSessionList) {
+            return yield* new AcpConnectionError({
+              message: "Agent does not support listing sessions",
+            })
+          }
+          return yield* Effect.tryPromise({
+            try: () => conn.connection.unstable_listSessions({ cwd: cwd ?? null }),
+            catch: (err) =>
+              new AcpConnectionError({
+                message: `Failed to list agent sessions: ${err}`,
+              }),
+          })
+        }
+      )
+
       const stats = () => {
         let terminals = 0
         let pendingPermissions = 0
@@ -436,6 +507,7 @@ export class ConnectionManager extends Context.Tag("@agentpane/ConnectionManager
         getAvailableCommands,
         getConfigOptions,
         setConfigOption,
+        listAgentSessions,
         stats,
       })
     })

@@ -59,6 +59,9 @@ export const api = {
     disconnect: (id: string): Promise<Response> =>
       fetch(`/api/sessions/${id}/connect`, { method: "DELETE" }),
 
+    agentSessions: (id: string, cwd?: string): Promise<Response> =>
+      fetch(`/api/sessions/${id}/agent-sessions${cwd ? `?cwd=${encodeURIComponent(cwd)}` : ""}`),
+
     commands: (id: string): Promise<Response> =>
       fetch(`/api/sessions/${id}/commands`),
 

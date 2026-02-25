@@ -119,6 +119,7 @@ export interface ChatState {
 type ChatAction =
   | { type: 'SET_OPTIMISTIC_TURN'; turn: import("./types").TurnData }
   | { type: 'SSE_PROMPT_STARTED' }
+  | { type: 'SSE_PROMPT_FINISHED' }
   | { type: 'SSE_DONE' }
   | { type: 'SSE_STATUS'; prompting: boolean }
   | { type: 'SSE_ERROR'; message: string }
@@ -145,6 +146,8 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
       return { ...state, optimisticTurn: action.turn }
     case 'SSE_PROMPT_STARTED':
       return { ...state, prompting: true, streamingBlocks: [] }
+    case 'SSE_PROMPT_FINISHED':
+      return { ...state, prompting: false }
     case 'SSE_DONE':
       return { ...state, prompting: false, optimisticTurn: null, streamingBlocks: [] }
     case 'SSE_STATUS':

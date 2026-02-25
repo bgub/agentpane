@@ -15,8 +15,8 @@
     "web"
   ],
   "scripts": {
-    "dev": "AGENTPANE_DEV=1 tsx --watch src/index.ts",
-    "build": "tsc && rm -rf web && cp -r ../web/dist web",
+    "dev": "AGENTPANE_DEBUG_STREAM=1 tsx --watch src/index.ts",
+    "build": "tsc && rm -rf web && cp -r ../web/.next/standalone web && cp -r ../web/.next/static web/apps/web/.next/static",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "prepublishOnly": "pnpm build",

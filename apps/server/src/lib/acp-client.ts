@@ -13,7 +13,8 @@ export class AcpClient extends Context.Tag("@agentpane/AcpClient")<
     readonly connect: (
       sessionId: string,
       cwd: string,
-      agentType: string
+      agentType: string,
+      agentSessionId?: string | null
     ) => Effect.Effect<{ agentSessionId: string }, AcpConnectionError>
     readonly prompt: (
       sessionId: string,
@@ -42,6 +43,10 @@ export class AcpClient extends Context.Tag("@agentpane/AcpClient")<
       configId: string,
       value: string
     ) => Effect.Effect<Array<Record<string, unknown>>, AcpConnectionError>
+    readonly listAgentSessions: (
+      sessionId: string,
+      cwd?: string
+    ) => Effect.Effect<unknown, AcpConnectionError>
     readonly ensureBroadcaster: (sessionId: string) => EventBroadcaster
     readonly removeBroadcaster: (sessionId: string) => void
     readonly stats: () => {
@@ -88,6 +93,7 @@ export class AcpClient extends Context.Tag("@agentpane/AcpClient")<
         getAvailableCommands: connections.getAvailableCommands,
         getConfigOptions: connections.getConfigOptions,
         setConfigOption: connections.setConfigOption,
+        listAgentSessions: connections.listAgentSessions,
         ensureBroadcaster: events.ensure,
         removeBroadcaster: events.remove,
         stats: () => ({

@@ -1,36 +1,25 @@
-import { ThemeProvider } from "next-themes"
-import { QueryProvider } from "@/components/query-provider"
+"use client"
+
 import { SessionProvider } from "@/components/session-provider"
 import { LayoutProvider } from "@/components/layout-provider"
 import Sidebar from "@/components/sidebar"
 import { PaneContainer } from "@/components/pane-container"
-import type { Session } from "@/lib/types"
 import type { LayoutState } from "@/lib/layout-types"
-import type { DehydratedState } from "@tanstack/react-query"
 
-export interface InitialState {
-  sessions: Session[]
-  activeSessionId: string | null
-  layout: LayoutState | null
-  dehydratedQueryState: DehydratedState
+interface AppProps {
+  initialLayout?: LayoutState | null
+  initialActiveSessionId?: string | null
 }
 
-export default function App({ initialState }: { initialState?: InitialState }) {
+export default function App({ initialLayout, initialActiveSessionId }: AppProps) {
   return (
-    <ThemeProvider attribute="class" defaultTheme="dark" enableSystem disableTransitionOnChange>
-      <QueryProvider dehydratedState={initialState?.dehydratedQueryState}>
-        <SessionProvider
-          initialSessions={initialState?.sessions}
-          initialActiveSessionId={initialState?.activeSessionId}
-        >
-          <LayoutProvider initialLayout={initialState?.layout}>
-            <div className="flex h-screen bg-[var(--t-bg)] overflow-hidden">
-              <Sidebar />
-              <PaneContainer />
-            </div>
-          </LayoutProvider>
-        </SessionProvider>
-      </QueryProvider>
-    </ThemeProvider>
+    <SessionProvider initialActiveSessionId={initialActiveSessionId}>
+      <LayoutProvider initialLayout={initialLayout}>
+        <div className="flex h-screen bg-[var(--t-bg)] overflow-hidden">
+          <Sidebar />
+          <PaneContainer />
+        </div>
+      </LayoutProvider>
+    </SessionProvider>
   )
 }

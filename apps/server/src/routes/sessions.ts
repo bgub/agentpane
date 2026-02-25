@@ -249,8 +249,14 @@ app.post("/:id/connect", async (c) => {
       ? yield* repo.updateConfig(id, bodyAgentType, bodyCwd)
       : yield* repo.get(id)
     acp.ensureBroadcaster(id)
-    return yield* acp.connect(id, session.cwd, session.agent_type)
+    return yield* acp.connect(id, session.cwd, session.agent_type, session.agent_session_id)
   }))
+})
+
+// GET /sessions/:id/agent-sessions — list agent's session history
+app.get("/:id/agent-sessions", async (c) => {
+  const cwd = c.req.query("cwd")
+  return runEffect(c, Effect.flatMap(AcpClient, (acp) => acp.listAgentSessions(c.req.param("id"), cwd)))
 })
 
 // DELETE /sessions/:id/connect — disconnect agent

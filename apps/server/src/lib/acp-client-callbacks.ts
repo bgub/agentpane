@@ -14,6 +14,8 @@ import {
 // Dependencies required by the client callbacks
 // ---------------------------------------------------------------------------
 
+const debugStream = process.env.AGENTPANE_DEBUG_STREAM === "1"
+
 export interface ClientDeps {
   readonly enqueueMessageBlock: (
     sessionId: string,
@@ -21,6 +23,7 @@ export interface ClientDeps {
     kind: string,
     content: string
   ) => Promise<void>
+  readonly updateSessionName: (sessionId: string, title: string) => Promise<void>
   readonly broadcast: (sessionId: string, event: unknown) => void
 }
 
@@ -40,6 +43,14 @@ export const makeClient = (
 
       const update = params.update as Record<string, unknown>
       const eventType = update.sessionUpdate as string | undefined
+
+      if (debugStream) {
+        const now = performance.now().toFixed(1)
+        const preview = eventType === "agent_message_chunk"
+          ? ` "${String((update.content as Record<string, unknown>)?.text ?? "").slice(0, 40)}"`
+          : ""
+        console.log(`[${now}ms] sessionUpdate: ${eventType}${preview} (session ${sessionId.slice(0, 8)})`)
+      }
 
       // Accumulate text for DB persistence
       if (
@@ -72,7 +83,16 @@ export const makeClient = (
         conn.availableCommands = (update.availableCommands as Array<Record<string, unknown>>) ?? []
       }
 
+      // Persist session title when agent pushes session_info_update
+      if (eventType === "session_info_update" && typeof update.title === "string") {
+        deps.updateSessionName(sessionId, update.title).catch(() => {})
+      }
+
       // Broadcast to all subscribers via session-level broadcaster
+      if (debugStream && eventType === "agent_message_chunk") {
+        const now = performance.now().toFixed(1)
+        console.log(`[${now}ms] broadcast: agent_message_chunk (session ${sessionId.slice(0, 8)})`)
+      }
       deps.broadcast(sessionId, update)
     },
 

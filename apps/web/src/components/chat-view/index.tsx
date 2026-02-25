@@ -49,11 +49,13 @@ export default function ChatView({
 
   const hasStreamingContent = streamingBlocks.length > 0
 
-  // Auto-scroll to bottom (in column-reverse, scrollTop 0 = visual bottom)
+  // Auto-scroll to bottom (in column-reverse, scrollTop 0 = visual bottom).
+  // Only trigger on new turns or when streaming starts — not on every chunk,
+  // since flex-col-reverse already keeps the scroll anchored to the bottom.
   useEffect(() => {
     const el = scrollRef.current
     if (el) el.scrollTop = 0
-  }, [allTurns, streamingBlocks])
+  }, [allTurns, hasStreamingContent])
 
   // Handle optimistic user turn from parent
   useEffect(() => {
@@ -130,14 +132,20 @@ export default function ChatView({
           dispatch({ type: 'SSE_PROMPT_STARTED' })
           patchSession({ prompting: true })
         } else if (eventType === "done") {
-          dispatch({ type: 'SSE_DONE' })
+          dispatch({ type: 'SSE_PROMPT_FINISHED' })
           patchSession({ prompting: false })
-          queryClient.invalidateQueries({ queryKey: queryKeys.conversation(sessionId) })
-          queryClient.invalidateQueries({ queryKey: queryKeys.tokenUsage(sessionId) })
+          Promise.all([
+            queryClient.invalidateQueries({ queryKey: queryKeys.conversation(sessionId) }),
+            queryClient.invalidateQueries({ queryKey: queryKeys.tokenUsage(sessionId) }),
+          ]).then(() => dispatch({ type: 'SSE_DONE' }))
         } else if (eventType === "error") {
           dispatch({ type: 'SSE_ERROR', message: `Error: ${data.message}` })
           patchSession({ prompting: false })
           queryClient.invalidateQueries({ queryKey: queryKeys.tokenUsage(sessionId) })
+        } else if (eventType === "session_info_update") {
+          if (typeof data.title === "string") {
+            patchSession({ name: data.title })
+          }
         } else if (eventType === "disconnected") {
           dispatch({ type: 'SSE_DISCONNECTED' })
           patchSession({ connected: false, prompting: false })

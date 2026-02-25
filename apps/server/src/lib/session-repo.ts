@@ -235,6 +235,14 @@ export class SessionRepo extends Context.Tag("@agentpane/SessionRepo")<
 
       const applyWriteOp = (op: WriteOp): Effect.Effect<void, SqlError> =>
         Effect.gen(function* () {
+          if (op._tag === "CreateTurn") {
+            yield* sql`
+              INSERT INTO turns (id, session_id, role, stop_reason, created_at)
+              VALUES (${op.turnId}, ${op.sessionId}, ${op.role}, ${null}, ${op.createdAt})
+            `
+            return
+          }
+
           if (op._tag === "AddMessageBlock") {
             const id = op.id ?? crypto.randomUUID()
             const now = op.createdAt ?? Date.now()
@@ -256,6 +264,11 @@ export class SessionRepo extends Context.Tag("@agentpane/SessionRepo")<
                 token_source = ${op.tokenUsage?.tokenSource ?? null}
               WHERE id = ${op.turnId}
             `
+            return
+          }
+
+          if (op._tag === "RenameSession") {
+            yield* sql`UPDATE sessions SET name = ${op.name} WHERE id = ${op.sessionId}`
             return
           }
 

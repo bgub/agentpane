@@ -1,7 +1,7 @@
 import type { ChildProcess } from "node:child_process"
 import { Effect } from "effect"
 import { RequestError, type ClientSideConnection, type RequestPermissionOutcome } from "@agentclientprotocol/sdk"
-import { AcpConnectionError, type Turn, type MessageBlock } from "./schema.js"
+import { AcpConnectionError } from "./schema.js"
 
 // ---------------------------------------------------------------------------
 // Interfaces
@@ -35,6 +35,8 @@ export interface AgentConnection {
   cleaned: boolean
   configOptions: Array<Record<string, unknown>>
   availableCommands: Array<Record<string, unknown>>
+  supportsLoadSession: boolean
+  supportsSessionList: boolean
 }
 
 export interface SubscribeResult {
@@ -82,19 +84,6 @@ export const getTerminal = (
   return terminal
 }
 
-/**
- * Workaround: claude-code-acp doesn't maintain history between prompt() calls,
- * so we prepend it ourselves. See https://github.com/zed-industries/claude-code-acp/issues/80
- */
-export const formatHistory = (
-  turns: ReadonlyArray<Turn & { blocks: ReadonlyArray<MessageBlock> }>
-): string => {
-  const lines = turns.flatMap((t) => {
-    const text = t.blocks.filter((b) => b.kind === "text").map((b) => b.content).join("\n")
-    return text ? [`${t.role === "user" ? "Human" : "Assistant"}: ${text}`] : []
-  })
-  return lines.length ? `<conversation_history>\n${lines.join("\n\n")}\n</conversation_history>\n\n` : ""
-}
 
 /**
  * Look up a connection or yield an AcpConnectionError.

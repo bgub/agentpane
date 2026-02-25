@@ -1,9 +1,9 @@
+import crypto from "node:crypto"
 import { Context, Effect, Layer, Runtime } from "effect"
 import { ConnectionManager } from "./connection-manager.js"
 import { EventHub } from "./event-hub.js"
-import { SessionRepo } from "./session-repo.js"
 import { AcpConnectionError } from "./schema.js"
-import { estimateTokenCount, formatHistory } from "./acp-types.js"
+import { estimateTokenCount } from "./acp-types.js"
 import { WriteQueue } from "./write-queue.js"
 import type { WriteOp } from "./write-ops.js"
 
@@ -19,7 +19,6 @@ export class PromptEngine extends Context.Tag("@agentpane/PromptEngine")<
   static readonly layer = Layer.effect(
     PromptEngine,
     Effect.gen(function* () {
-      const repo = yield* SessionRepo
       const connections = yield* ConnectionManager
       const eventHub = yield* EventHub
       const writeQueue = yield* WriteQueue
@@ -36,24 +35,37 @@ export class PromptEngine extends Context.Tag("@agentpane/PromptEngine")<
             })
           }
 
-          const priorTurns = yield* repo.getConversation(sessionId).pipe(Effect.orDie)
-
-          const userTurn = yield* repo.addTurn(sessionId, "user").pipe(Effect.orDie)
+          const now = Date.now()
+          const userTurnId = crypto.randomUUID()
+          const assistantTurnId = crypto.randomUUID()
           const userTokens = estimateTokenCount(content)
-          const assistantTurn = yield* repo.addTurn(sessionId, "assistant").pipe(Effect.orDie)
 
           const initialOps: ReadonlyArray<WriteOp> = [
             {
+              _tag: "CreateTurn",
+              sessionId,
+              turnId: userTurnId,
+              role: "user",
+              createdAt: now,
+            },
+            {
+              _tag: "CreateTurn",
+              sessionId,
+              turnId: assistantTurnId,
+              role: "assistant",
+              createdAt: now + 1,
+            },
+            {
               _tag: "AddMessageBlock",
               sessionId,
-              turnId: userTurn.id,
+              turnId: userTurnId,
               kind: "text",
               content,
             },
             {
               _tag: "CompleteTurn",
               sessionId,
-              turnId: userTurn.id,
+              turnId: userTurnId,
               stopReason: "end_turn",
               tokenUsage: {
                 promptTokens: userTokens,
@@ -67,17 +79,15 @@ export class PromptEngine extends Context.Tag("@agentpane/PromptEngine")<
           yield* writeQueue.enqueueMany(initialOps)
           yield* writeQueue.flushSession(sessionId)
 
-          const fullPrompt = formatHistory(priorTurns) + content
-
           conn.prompting = true
-          conn.currentAssistantTurnId = assistantTurn.id
+          conn.currentAssistantTurnId = assistantTurnId
           conn.accumulatedText = ""
-          yield* connections.setPromptState(sessionId, true, assistantTurn.id, conn.agentSessionId)
+          yield* connections.setPromptState(sessionId, true, assistantTurnId, conn.agentSessionId)
 
           eventHub.broadcast(sessionId, {
             sessionUpdate: "prompt_started",
-            userTurnId: userTurn.id,
-            assistantTurnId: assistantTurn.id,
+            userTurnId,
+            assistantTurnId,
           })
 
           const persistCompletion = (
@@ -96,7 +106,7 @@ export class PromptEngine extends Context.Tag("@agentpane/PromptEngine")<
                 ops.push({
                   _tag: "AddMessageBlock",
                   sessionId,
-                  turnId: assistantTurn.id,
+                  turnId: assistantTurnId,
                   kind: "text",
                   content: conn.accumulatedText,
                 })
@@ -105,7 +115,7 @@ export class PromptEngine extends Context.Tag("@agentpane/PromptEngine")<
               ops.push({
                 _tag: "CompleteTurn",
                 sessionId,
-                turnId: assistantTurn.id,
+                turnId: assistantTurnId,
                 stopReason,
                 tokenUsage,
               })
@@ -122,12 +132,12 @@ export class PromptEngine extends Context.Tag("@agentpane/PromptEngine")<
           conn.connection
             .prompt({
               sessionId: conn.agentSessionId,
-              prompt: [{ type: "text", text: fullPrompt }],
+              prompt: [{ type: "text", text: content }],
             })
             .then(async (response) => {
               const reason = response.stopReason || "end_turn"
               const usage = response.usage
-              const promptTokens = usage?.inputTokens ?? estimateTokenCount(fullPrompt)
+              const promptTokens = usage?.inputTokens ?? estimateTokenCount(content)
               const completionTokens = usage?.outputTokens ?? estimateTokenCount(conn.accumulatedText)
               const totalTokens = usage?.totalTokens ?? promptTokens + completionTokens
               await runPromise(
@@ -141,7 +151,7 @@ export class PromptEngine extends Context.Tag("@agentpane/PromptEngine")<
               eventHub.broadcast(sessionId, { sessionUpdate: "done", stopReason: reason })
             })
             .catch(async (err) => {
-              const promptTokens = estimateTokenCount(fullPrompt)
+              const promptTokens = estimateTokenCount(content)
               const completionTokens = estimateTokenCount(conn.accumulatedText)
               await runPromise(
                 persistCompletion("error", {
@@ -160,7 +170,7 @@ export class PromptEngine extends Context.Tag("@agentpane/PromptEngine")<
               runPromise(connections.setPromptState(sessionId, false, null, conn.agentSessionId)).catch(() => {})
             })
 
-          return { userTurnId: userTurn.id, assistantTurnId: assistantTurn.id }
+          return { userTurnId, assistantTurnId }
         }
       )
 
