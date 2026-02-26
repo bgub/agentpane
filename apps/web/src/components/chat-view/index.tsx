@@ -69,7 +69,7 @@ const VISIBLE_KINDS = new Set(["text", "thought", "tool_call", "resource_link", 
 
 type MergedBlock = { id: string; kind: string; content: string }
 
-function AssistantBlock({ block, sessionId }: { block: MergedBlock; sessionId: string }) {
+function AssistantBlock({ block, sessionId, turnCompleted }: { block: MergedBlock; sessionId: string; turnCompleted?: boolean }) {
   if (block.kind === "thought") {
     return (
       <details className="pl-5 border-l-2 border-[var(--t-border)]">
@@ -99,9 +99,13 @@ function AssistantBlock({ block, sessionId }: { block: MergedBlock; sessionId: s
     )
   }
   if (block.kind === "tool_call") {
+    const state = parseToolCallBlock(block)
+    if (turnCompleted && (state.status === "in_progress" || state.status === "pending")) {
+      state.status = "completed"
+    }
     return (
       <div className="pl-5 border-l-2 border-[var(--t-border)]">
-        <ToolCallBox state={parseToolCallBlock(block)} sessionId={sessionId} />
+        <ToolCallBox state={state} sessionId={sessionId} />
       </div>
     )
   }
@@ -114,13 +118,14 @@ function AssistantBlock({ block, sessionId }: { block: MergedBlock; sessionId: s
 
 function AssistantTurn({ turn, sessionId }: { turn: TurnData; sessionId: string }) {
   const merged = mergeToolCallUpdates(turn.blocks)
+  const turnCompleted = !!turn.stop_reason
   // Render thought blocks first (collapsed), then everything else in order
   const thoughts = merged.filter((b) => b.kind === "thought")
   const rest = merged.filter((b) => b.kind !== "thought" && VISIBLE_KINDS.has(b.kind))
   return (
     <div className="py-1">
-      {thoughts.map((b) => <AssistantBlock key={b.id} block={b} sessionId={sessionId} />)}
-      {rest.map((b) => <AssistantBlock key={b.id} block={b} sessionId={sessionId} />)}
+      {thoughts.map((b) => <AssistantBlock key={b.id} block={b} sessionId={sessionId} turnCompleted={turnCompleted} />)}
+      {rest.map((b) => <AssistantBlock key={b.id} block={b} sessionId={sessionId} turnCompleted={turnCompleted} />)}
       {turn.stop_reason && turn.stop_reason !== "end_turn" && (
         <div className="pl-5 mt-1 text-[11px] font-mono text-[var(--t-dim)]">
           [{turn.stop_reason}]
