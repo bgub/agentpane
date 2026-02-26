@@ -9,9 +9,9 @@
     "prepare": "effect-language-service patch"
   },
   "devDependencies": {
-    "@effect/language-service": "^0.73.0",
-    "turbo": "^2",
-    "typescript": "^5"
+    "@effect/language-service": "^0.77.0",
+    "turbo": "^2.8.11",
+    "typescript": "^5.9.3"
   },
   "pnpm": {
     "onlyBuiltDependencies": [

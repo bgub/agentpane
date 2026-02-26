@@ -8,8 +8,8 @@
     "typecheck": "astro check"
   },
   "dependencies": {
-    "astro": "^5",
-    "@astrojs/starlight": "^0.34",
-    "sharp": "^0.33"
+    "@astrojs/starlight": "^0.34.8",
+    "astro": "^5.18.0",
+    "sharp": "^0.33.5"
   }
 }
