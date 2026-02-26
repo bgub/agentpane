@@ -158,14 +158,14 @@ function SyncCodeBlock({
         style={rootVars}
       >
         <code className="[counter-increment:line_0] [counter-reset:line]">
-          {result.tokens.map((line, i) => (
+          {result.tokens.map((line, lineNum) => (
             <span
-              key={i}
+              key={`L${lineNum}`}
               className="block before:content-[counter(line)] before:inline-block before:[counter-increment:line] before:w-6 before:mr-4 before:text-[13px] before:text-right before:text-muted-foreground/50 before:font-mono before:select-none"
             >
-              {line.map((token, j) => (
+              {line.map((token, tokenIdx) => (
                 <span
-                  key={j}
+                  key={`${lineNum}-${tokenIdx}`}
                   className={[
                     "text-[var(--sdm-c,inherit)]",
                     "dark:text-[var(--shiki-dark,var(--sdm-c,inherit))]",

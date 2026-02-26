@@ -79,12 +79,16 @@ export function TabBar({ paneId, tabSessionIds, activeTabSessionId, isFocused }:
           return (
             <div
               key={sessionId}
+              role="tab"
+              tabIndex={0}
+              aria-selected={isActive}
               draggable
               onDragStart={(e) => handleDragStart(e, sessionId)}
               onClick={() => {
                 openSessionInPane(paneId, sessionId)
                 focusPane(paneId)
               }}
+              onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); openSessionInPane(paneId, sessionId); focusPane(paneId) } }}
               className={`group relative flex items-center gap-1.5 pl-2.5 pr-1.5 py-1.5 text-[11px] cursor-pointer shrink-0 rounded-t-md transition-colors ${
                 isActive
                   ? "bg-[var(--t-bg)] text-[var(--t-bright)]"

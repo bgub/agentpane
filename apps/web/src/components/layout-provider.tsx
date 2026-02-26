@@ -46,22 +46,27 @@ export function LayoutProvider({
     let cancelled = false
 
     const init = async () => {
+      let res: Response | undefined
       try {
-        const res = await api.settings.get("layout")
-        if (!cancelled && res.ok) {
-          const data = await res.json() as { value?: string }
-          if (data?.value) {
-            const parsed = parseLayout(data.value, sessionIds)
-            if (parsed) {
-              setLayout(parsed)
-              setInitialized(true)
-              return
-            }
-          }
-        }
+        res = await api.settings.get("layout")
       } catch { /* ignore */ }
 
-      if (!cancelled) setInitialized(true)
+      if (cancelled) return
+
+      let layoutValue: string | undefined
+      if (res !== undefined && res.ok) {
+        const data = await res.json() as { value?: string }
+        layoutValue = data !== null && data !== undefined ? data.value : undefined
+      }
+      if (layoutValue) {
+        const parsed = parseLayout(layoutValue, sessionIds)
+        if (parsed) {
+          setLayout(parsed)
+          setInitialized(true)
+          return
+        }
+      }
+      setInitialized(true)
     }
 
     void init()
@@ -78,34 +83,26 @@ export function LayoutProvider({
     return () => { if (saveTimerRef.current) clearTimeout(saveTimerRef.current) }
   }, [layout, initialized])
 
-  // Prune stale session IDs when sessions change
-  useEffect(() => {
-    if (!initialized) return
-    setLayout((prev) => {
-      let changed = false
-      const panes = prev.panes.map((p) => {
-        const validTabs = p.tabSessionIds.filter((id) => sessionIds.has(id))
-        if (validTabs.length !== p.tabSessionIds.length) changed = true
-        const activeTab = validTabs.includes(p.activeTabSessionId)
-          ? p.activeTabSessionId
-          : validTabs[0] ?? ""
-        if (activeTab !== p.activeTabSessionId) changed = true
-        return { ...p, tabSessionIds: validTabs, activeTabSessionId: activeTab }
-      })
-      if (!changed) return prev
-      const nonEmpty = panes.filter((p) => p.tabSessionIds.length > 0)
-      // Keep at least one pane
-      const finalPanes = nonEmpty.length > 0 ? nonEmpty : [{ id: prev.panes[0]?.id ?? newPaneId(), tabSessionIds: [], activeTabSessionId: "" }]
-      const focusedPaneId = finalPanes.some((p) => p.id === prev.focusedPaneId)
-        ? prev.focusedPaneId
-        : finalPanes[0].id
-      return {
-        panes: finalPanes,
-        focusedPaneId,
-        paneSizes: finalPanes.length === prev.panes.length ? prev.paneSizes : evenSizes(finalPanes.length),
-      }
+  // Prune stale session IDs during render (before paint)
+  if (initialized && layout.panes.some((p) => p.tabSessionIds.some((id) => id && !sessionIds.has(id)))) {
+    const panes = layout.panes.map((p) => {
+      const validTabs = p.tabSessionIds.filter((id) => sessionIds.has(id))
+      const activeTab = validTabs.includes(p.activeTabSessionId)
+        ? p.activeTabSessionId
+        : validTabs[0] ?? ""
+      return { ...p, tabSessionIds: validTabs, activeTabSessionId: activeTab }
     })
-  }, [sessions, initialized]) // eslint-disable-line react-hooks/exhaustive-deps
+    const nonEmpty = panes.filter((p) => p.tabSessionIds.length > 0)
+    const finalPanes = nonEmpty.length > 0 ? nonEmpty : [{ id: layout.panes[0]?.id ?? newPaneId(), tabSessionIds: [], activeTabSessionId: "" }]
+    const focusedPaneId = finalPanes.some((p) => p.id === layout.focusedPaneId)
+      ? layout.focusedPaneId
+      : finalPanes[0].id
+    setLayout({
+      panes: finalPanes,
+      focusedPaneId,
+      paneSizes: finalPanes.length === layout.panes.length ? layout.paneSizes : evenSizes(finalPanes.length),
+    })
+  }
 
   // Sync focused pane's active tab → SessionProvider's activeSessionId
   useEffect(() => {
@@ -116,27 +113,22 @@ export function LayoutProvider({
     }
   }, [layout.focusedPaneId, layout.panes, initialized]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Watch for new sessions created via startSession (activeSessionId changes)
-  const prevActiveRef = useRef(activeSessionId)
-  useEffect(() => {
-    if (!initialized) return
-    if (activeSessionId && activeSessionId !== prevActiveRef.current) {
-      // Check if this session is already open in any pane
-      const alreadyOpen = layout.panes.some((p) => p.tabSessionIds.includes(activeSessionId))
-      if (!alreadyOpen && sessionIds.has(activeSessionId)) {
-        // Open in focused pane
-        setLayout((prev) => {
-          const panes = prev.panes.map((p) =>
-            p.id === prev.focusedPaneId
-              ? { ...p, tabSessionIds: [...p.tabSessionIds, activeSessionId], activeTabSessionId: activeSessionId }
-              : p
-          )
-          return { ...prev, panes }
-        })
-      }
+  // Open new sessions in focused pane during render (before paint)
+  const [prevActiveSessionId, setPrevActiveSessionId] = useState(activeSessionId)
+  if (initialized && activeSessionId && activeSessionId !== prevActiveSessionId) {
+    setPrevActiveSessionId(activeSessionId)
+    const alreadyOpen = layout.panes.some((p) => p.tabSessionIds.includes(activeSessionId))
+    if (!alreadyOpen && sessionIds.has(activeSessionId)) {
+      setLayout((prev) => {
+        const panes = prev.panes.map((p) =>
+          p.id === prev.focusedPaneId
+            ? { ...p, tabSessionIds: [...p.tabSessionIds, activeSessionId], activeTabSessionId: activeSessionId }
+            : p
+        )
+        return { ...prev, panes }
+      })
     }
-    prevActiveRef.current = activeSessionId
-  }, [activeSessionId, initialized]) // eslint-disable-line react-hooks/exhaustive-deps
+  }
 
   const splitPane = (paneId: string) => {
     setLayout((prev) => {

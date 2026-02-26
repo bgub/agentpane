@@ -1,3 +1,5 @@
+import type { SessionModesState } from "@/lib/types"
+
 export interface TurnData {
   id: string
   session_id: string
@@ -36,6 +38,7 @@ export interface ChatViewProps {
   promptError: { message: string; ts: number } | null
   onConfigOptionsChange?: (configOptions: ConfigOption[]) => void
   onAvailableCommandsChange?: (commands: AvailableCommand[]) => void
+  onModesChange?: (modes: SessionModesState | null) => void
 }
 
 export interface PermissionOption {
@@ -61,7 +64,7 @@ export interface PlanEntry {
 }
 
 export type StreamingBlock =
-  | { type: "text"; content: string }
+  | { type: "text"; id: string; content: string }
   | { type: "tool_call"; state: ToolCallState }
   | { type: "plan"; entries: PlanEntry[] }
 

@@ -1,5 +1,8 @@
 export const dynamic = "force-dynamic"
 
+import type { Metadata } from "next"
+export const metadata: Metadata = { title: "AgentPane", description: "Web interface for AI coding agents" }
+
 import { dehydrate, HydrationBoundary } from "@tanstack/react-query"
 import { getQueryClient } from "@/lib/get-query-client"
 import { queryKeys } from "@/lib/queries"

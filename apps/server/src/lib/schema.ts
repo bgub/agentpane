@@ -48,3 +48,21 @@ export class AcpConnectionError extends Schema.TaggedError<AcpConnectionError>()
   get httpStatus() { return 502 as const }
   get httpMessage() { return this.message }
 }
+
+export class AuthRequiredError extends Schema.TaggedError<AuthRequiredError>()(
+  "AuthRequiredError",
+  {
+    message: Schema.String,
+    provider: Schema.String,
+    authMethods: Schema.Array(
+      Schema.Struct({
+        id: Schema.String,
+        name: Schema.String,
+        description: Schema.optional(Schema.String),
+      })
+    ),
+  }
+) {
+  get httpStatus() { return 401 as const }
+  get httpMessage() { return this.message }
+}

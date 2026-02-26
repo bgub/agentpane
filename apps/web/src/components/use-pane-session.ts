@@ -2,9 +2,9 @@ import { useState, useEffect, useRef } from "react"
 import { useSession } from "./session-provider"
 import { api } from "@/lib/api"
 import type { ConfigOption, AvailableCommand } from "./chat-view/types"
-import type { Session } from "@/lib/types"
+import type { Session, AuthMethod, SessionModesState } from "@/lib/types"
 
-export interface PaneSessionState {
+interface PaneSessionState {
   activeSession: Session | undefined
   connected: boolean
   prompting: boolean
@@ -13,13 +13,18 @@ export interface PaneSessionState {
   promptError: { message: string; ts: number } | null
   configOptions: ConfigOption[]
   availableCommands: AvailableCommand[]
+  pendingAuthMethods: AuthMethod[]
+  modes: SessionModesState | null
   connectAgent: () => Promise<void>
+  authenticateAndConnect: (methodId: string) => Promise<void>
   disconnectAgent: () => Promise<void>
   sendPrompt: (text: string) => Promise<void>
   cancelPrompt: () => void
   setConfigOption: (configId: string, value: string) => Promise<void>
+  setMode: (modeId: string) => Promise<void>
   onConfigOptionsChange: (opts: ConfigOption[]) => void
   onAvailableCommandsChange: (cmds: AvailableCommand[]) => void
+  onModesChange: (modes: SessionModesState | null) => void
 }
 
 export function usePaneSession(sessionId: string | undefined): PaneSessionState {
@@ -34,33 +39,51 @@ export function usePaneSession(sessionId: string | undefined): PaneSessionState 
   const [promptError, setPromptError] = useState<{ message: string; ts: number } | null>(null)
   const [configOptions, setConfigOptions] = useState<ConfigOption[]>([])
   const [availableCommands, setAvailableCommands] = useState<AvailableCommand[]>([])
+  const [pendingAuthMethods, setPendingAuthMethods] = useState<AuthMethod[]>([])
+  const [modes, setModes] = useState<SessionModesState | null>(null)
   const configOptionsRef = useRef(configOptions)
   configOptionsRef.current = configOptions
 
   // Clear transient state when session changes
   useEffect(() => {
+    void sessionId
     setConnecting(false)
     setLastSentPrompt(null)
     setPromptError(null)
     setConfigOptions([])
     setAvailableCommands([])
+    setPendingAuthMethods([])
+    setModes(null)
   }, [sessionId])
 
   // Returns true if connected successfully, false on error
-  const attemptConnect = async (session: Session): Promise<boolean> => {
+  const attemptConnect = async (session: Session, authMethodId?: string): Promise<boolean> => {
     setConnecting(true)
     try {
-      const res = await api.sessions.connect(session.id, {
+      const body: { agent_type: string; cwd: string; authMethodId?: string } = {
         agent_type: session.agent_type,
         cwd: session.cwd,
-      })
+      }
+      if (authMethodId) body.authMethodId = authMethodId
+      const res = await api.sessions.connect(session.id, body)
       if (!res.ok) {
-        const err = await res.json().catch(() => ({ error: "Connection failed" }))
-        setPromptError({ message: `Error: ${err.error}`, ts: Date.now() })
+        const err = await res.json().catch(() => ({ error: "Connection failed" })) as {
+          error?: string
+          authMethods?: AuthMethod[]
+        }
+        if (res.status === 401 && Array.isArray(err.authMethods)) {
+          setPendingAuthMethods(err.authMethods)
+          setPromptError({ message: `Error: ${err.error ?? "Authentication required"}`, ts: Date.now() })
+        } else {
+          setPendingAuthMethods([])
+          setPromptError({ message: `Error: ${err.error ?? "Connection failed"}`, ts: Date.now() })
+        }
         return false
       }
+      setPendingAuthMethods([])
       return true
     } catch {
+      setPendingAuthMethods([])
       setPromptError({ message: "Error: Failed to connect agent", ts: Date.now() })
       return false
     } finally {
@@ -71,6 +94,11 @@ export function usePaneSession(sessionId: string | undefined): PaneSessionState 
   const connectAgent = async () => {
     if (!activeSession || connecting) return
     await attemptConnect(activeSession)
+  }
+
+  const authenticateAndConnect = async (methodId: string) => {
+    if (!activeSession || connecting || !methodId) return
+    await attemptConnect(activeSession, methodId)
   }
 
   const disconnectAgent = async () => {
@@ -94,6 +122,23 @@ export function usePaneSession(sessionId: string | undefined): PaneSessionState 
       }
     } catch {
       setConfigOptions(prev)
+    }
+  }
+
+  const setMode = async (modeId: string) => {
+    if (!activeSession) return
+    const prev = modes
+    setModes((old) => ({ ...(old ?? {}), currentModeId: modeId }))
+    try {
+      const res = await api.sessions.setMode(activeSession.id, modeId)
+      if (res.ok) {
+        const updated = await res.json() as SessionModesState | null
+        setModes(updated)
+      } else {
+        setModes(prev)
+      }
+    } catch {
+      setModes(prev)
     }
   }
 
@@ -123,6 +168,18 @@ export function usePaneSession(sessionId: string | undefined): PaneSessionState 
     }
   }
 
+  const activeSessionId = activeSession?.id
+  useEffect(() => {
+    if (!activeSessionId || !connected) return
+    api.sessions.mode(activeSessionId)
+      .then(async (res) => {
+        if (!res.ok) return
+        const data = await res.json() as SessionModesState | null
+        setModes(data)
+      })
+      .catch(() => {})
+  }, [activeSessionId, connected])
+
   return {
     activeSession,
     connected,
@@ -132,12 +189,17 @@ export function usePaneSession(sessionId: string | undefined): PaneSessionState 
     promptError,
     configOptions,
     availableCommands,
+    pendingAuthMethods,
+    modes,
     connectAgent,
+    authenticateAndConnect,
     disconnectAgent,
     sendPrompt,
     cancelPrompt,
     setConfigOption,
+    setMode,
     onConfigOptionsChange: setConfigOptions,
     onAvailableCommandsChange: setAvailableCommands,
+    onModesChange: setModes,
   }
 }

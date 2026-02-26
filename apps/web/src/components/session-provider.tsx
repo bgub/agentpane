@@ -56,17 +56,18 @@ export function SessionProvider({
 
   const runHealthCheck = async (onOnline?: () => void) => {
     setHealthChecking(true)
+    let data: Record<string, unknown> | undefined
     try {
       const res = await api.health()
-      const data = await res.json()
-      if (data?.app === "agentpane") {
-        setBackendStatus("online")
-        onOnline?.()
-        setHealthChecking(false)
-        return
-      }
-    } catch {}
-    setBackendStatus("offline")
+      data = await res.json()
+    } catch { /* ignore */ }
+    const online = data !== undefined && data.app === "agentpane"
+    if (online) {
+      setBackendStatus("online")
+      onOnline?.()
+    } else {
+      setBackendStatus("offline")
+    }
     setHealthChecking(false)
   }
 
@@ -74,33 +75,39 @@ export function SessionProvider({
   useEffect(() => {
     if (initialActiveSessionId != null) return
     void runHealthCheck()
-  }, [])
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
-  useEffect(() => {
-    if (sessionsQuery.isSuccess) {
-      setBackendStatus("online")
-    }
-  }, [sessionsQuery.isSuccess])
-
-  // Keep activeSessionId valid and mark backend online when sessions arrive
-  useEffect(() => {
-    if (sessions.length === 0) return
-    _setActiveSessionId((prev) => prev && sessions.some((s) => s.id === prev) ? prev : sessions[0]?.id ?? null)
+  // Mark backend online when sessions query succeeds (render-time)
+  if (sessionsQuery.isSuccess && backendStatus !== "online") {
     setBackendStatus("online")
-  }, [sessions])
+  }
+
+  // Keep activeSessionId valid when sessions change (render-time)
+  const [prevSessionCount, setPrevSessionCount] = useState(sessions.length)
+  if (sessions.length > 0 && sessions.length !== prevSessionCount) {
+    setPrevSessionCount(sessions.length)
+    const currentValid = activeSessionId !== null && sessions.some((s) => s.id === activeSessionId)
+    if (!currentValid) {
+      const firstSession = sessions[0]
+      _setActiveSessionId(firstSession !== undefined ? firstSession.id : null)
+    }
+  }
 
   // Poll health
   useEffect(() => {
     if (backendStatus === "checking") return
     const interval = setInterval(async () => {
+      let pollData: Record<string, unknown> | undefined
       try {
         const res = await api.health()
-        const data = await res.json()
-        if (data?.app !== "agentpane") throw new Error()
+        pollData = await res.json()
+      } catch { /* ignore */ }
+      const healthy = pollData !== undefined && pollData.app === "agentpane"
+      if (healthy) {
         if (backendStatus === "offline") {
           queryClient.invalidateQueries({ queryKey: queryKeys.sessions })
         }
-      } catch {
+      } else {
         setBackendStatus("offline")
       }
     }, 5000)

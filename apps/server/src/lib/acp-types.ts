@@ -35,6 +35,7 @@ export interface AgentConnection {
   cleaned: boolean
   configOptions: Array<Record<string, unknown>>
   availableCommands: Array<Record<string, unknown>>
+  modes: Record<string, unknown> | null
   supportsLoadSession: boolean
   supportsSessionList: boolean
 }

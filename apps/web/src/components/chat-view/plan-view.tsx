@@ -6,9 +6,9 @@ export function PlanView({ entries }: { entries: PlanEntry[] }) {
     <div className="my-1.5 rounded-md bg-[var(--t-surface)] border border-[var(--t-border)] px-3 py-2">
       <div className="text-[10px] font-mono uppercase tracking-wider text-[var(--t-dim)] mb-1.5">Plan</div>
       <div className="space-y-0.5">
-        {entries.map((entry, i) => (
+        {entries.map((entry, idx) => (
           <div
-            key={i}
+            key={idx}
             className="flex items-center gap-2 text-xs font-mono py-0.5"
             style={{ opacity: entry.priority === "low" ? 0.55 : entry.priority === "medium" ? 0.8 : 1 }}
           >

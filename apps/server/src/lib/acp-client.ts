@@ -1,10 +1,10 @@
 import { Context, Effect, Layer } from "effect"
-import { AcpConnectionError } from "./schema.js"
+import { AcpConnectionError, AuthRequiredError } from "./schema.js"
 import { EventBroadcaster } from "./event-broadcaster.js"
 import { type SubscribeResult } from "./acp-types.js"
 import { EventHub, type EventHubStats } from "./event-hub.js"
 import { ConnectionManager, type ConnectionManagerStats } from "./connection-manager.js"
-import { PromptEngine } from "./prompt-engine.js"
+import { PromptEngine, type PromptInputBlock } from "./prompt-engine.js"
 import { WriteQueue, type WriteQueueStats } from "./write-queue.js"
 
 export class AcpClient extends Context.Tag("@agentpane/AcpClient")<
@@ -14,11 +14,12 @@ export class AcpClient extends Context.Tag("@agentpane/AcpClient")<
       sessionId: string,
       cwd: string,
       agentType: string,
-      agentSessionId?: string | null
-    ) => Effect.Effect<{ agentSessionId: string }, AcpConnectionError>
+      agentSessionId?: string | null,
+      authMethodId?: string
+    ) => Effect.Effect<{ agentSessionId: string }, AcpConnectionError | AuthRequiredError>
     readonly prompt: (
       sessionId: string,
-      content: string
+      blocks: ReadonlyArray<PromptInputBlock>
     ) => Effect.Effect<{ userTurnId: string; assistantTurnId: string }, AcpConnectionError>
     readonly cancel: (sessionId: string) => Effect.Effect<void>
     readonly disconnect: (sessionId: string) => Effect.Effect<void>
@@ -43,6 +44,13 @@ export class AcpClient extends Context.Tag("@agentpane/AcpClient")<
       configId: string,
       value: string
     ) => Effect.Effect<Array<Record<string, unknown>>, AcpConnectionError>
+    readonly getModes: (
+      sessionId: string
+    ) => Effect.Effect<Record<string, unknown> | null, AcpConnectionError>
+    readonly setMode: (
+      sessionId: string,
+      modeId: string
+    ) => Effect.Effect<Record<string, unknown> | null, AcpConnectionError>
     readonly listAgentSessions: (
       sessionId: string,
       cwd?: string
@@ -93,6 +101,8 @@ export class AcpClient extends Context.Tag("@agentpane/AcpClient")<
         getAvailableCommands: connections.getAvailableCommands,
         getConfigOptions: connections.getConfigOptions,
         setConfigOption: connections.setConfigOption,
+        getModes: connections.getModes,
+        setMode: connections.setMode,
         listAgentSessions: connections.listAgentSessions,
         ensureBroadcaster: events.ensure,
         removeBroadcaster: events.remove,

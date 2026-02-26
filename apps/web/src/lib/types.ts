@@ -17,3 +17,20 @@ export interface SessionTokenUsage {
   estimated_turns: number
   tokenized_turns: number
 }
+
+export interface AuthMethod {
+  id: string
+  name: string
+  description?: string
+}
+
+export interface SessionMode {
+  modeId: string
+  name: string
+  description?: string
+}
+
+export interface SessionModesState {
+  currentModeId?: string
+  modes?: SessionMode[]
+}

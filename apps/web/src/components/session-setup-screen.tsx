@@ -19,10 +19,17 @@ export function SessionSetupScreen() {
     if (!selectedProvider || starting) return
     setError(null)
     setStarting(true)
+    const cwd = cwdValue.trim() || "~"
+    let failed = false
+    let errorMessage = "Failed to start session"
     try {
-      await startSession(selectedProvider, cwdValue.trim() || "~")
+      await startSession(selectedProvider, cwd)
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to start session")
+      failed = true
+      if (err instanceof Error) errorMessage = err.message
+    }
+    if (failed) {
+      setError(errorMessage)
       setStarting(false)
     }
   }

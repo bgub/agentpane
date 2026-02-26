@@ -6,7 +6,7 @@ import {
   PROTOCOL_VERSION,
 } from "@agentclientprotocol/sdk"
 import { nodeToWebWritable, nodeToWebReadable } from "@zed-industries/claude-code-acp"
-import { AcpConnectionError } from "./schema.js"
+import { AcpConnectionError, AuthRequiredError } from "./schema.js"
 import { resolveProviderBin, PROVIDERS } from "./providers.js"
 import {
   type AgentConnection,
@@ -37,8 +37,9 @@ export class ConnectionManager extends Context.Tag("@agentpane/ConnectionManager
       sessionId: string,
       cwd: string,
       agentType: string,
-      agentSessionId?: string | null
-    ) => Effect.Effect<{ agentSessionId: string }, AcpConnectionError>
+      agentSessionId?: string | null,
+      authMethodId?: string
+    ) => Effect.Effect<{ agentSessionId: string }, AcpConnectionError | AuthRequiredError>
     readonly disconnect: (sessionId: string) => Effect.Effect<void>
     readonly cancel: (sessionId: string) => Effect.Effect<void>
     readonly get: (sessionId: string) => Effect.Effect<AgentConnection, AcpConnectionError>
@@ -68,6 +69,13 @@ export class ConnectionManager extends Context.Tag("@agentpane/ConnectionManager
       configId: string,
       value: string
     ) => Effect.Effect<Array<Record<string, unknown>>, AcpConnectionError>
+    readonly getModes: (
+      sessionId: string
+    ) => Effect.Effect<Record<string, unknown> | null, AcpConnectionError>
+    readonly setMode: (
+      sessionId: string,
+      modeId: string
+    ) => Effect.Effect<Record<string, unknown> | null, AcpConnectionError>
     readonly listAgentSessions: (
       sessionId: string,
       cwd?: string
@@ -142,7 +150,13 @@ export class ConnectionManager extends Context.Tag("@agentpane/ConnectionManager
       }
 
       const connect = Effect.fn("ConnectionManager.connect")(
-        function* (sessionId: string, cwd: string, agentType: string, agentSessionId?: string | null) {
+        function* (
+          sessionId: string,
+          cwd: string,
+          agentType: string,
+          agentSessionId?: string | null,
+          authMethodId?: string
+        ) {
           if (connections.has(sessionId)) {
             yield* disconnect(sessionId)
           }
@@ -241,6 +255,21 @@ export class ConnectionManager extends Context.Tag("@agentpane/ConnectionManager
           const authMethods = (initResponse as Record<string, unknown>).authMethods as
             | Array<{ id: string; name: string; description?: string }> | undefined
 
+          if (authMethodId) {
+            yield* Effect.tryPromise({
+              try: () =>
+                clientConnection.authenticate({
+                  methodId: authMethodId,
+                }),
+              catch: (err) => {
+                proc.kill()
+                return new AcpConnectionError({
+                  message: `Authentication failed for ${providerName}: ${err}`,
+                })
+              },
+            })
+          }
+
           // Try loadSession if agent supports it and we have a stored agentSessionId
           let resolvedAgentSessionId: string | null = null
           let sessionResponse: Record<string, unknown> | null = null
@@ -278,10 +307,12 @@ export class ConnectionManager extends Context.Tag("@agentpane/ConnectionManager
                   (err as { code?: number }).code === -32000
                 if (isAuthError) {
                   const hint = authMethods?.[0]?.description
-                  return new AcpConnectionError({
+                  return new AuthRequiredError({
                     message: hint
-                      ? `Authentication required — ${hint}`
+                      ? `Authentication required for ${providerName} — ${hint}`
                       : `Authentication required for ${providerName}`,
+                    provider: providerName,
+                    authMethods: authMethods ?? [],
                   })
                 }
                 return new AcpConnectionError({
@@ -306,6 +337,9 @@ export class ConnectionManager extends Context.Tag("@agentpane/ConnectionManager
             cleaned: false,
             configOptions: sessionResponse?.configOptions as Array<Record<string, unknown>> ?? [],
             availableCommands: sessionResponse?.availableCommands as Array<Record<string, unknown>> ?? [],
+            modes: (sessionResponse?.modes && typeof sessionResponse.modes === "object")
+              ? (sessionResponse.modes as Record<string, unknown>)
+              : null,
             supportsLoadSession,
             supportsSessionList,
           }
@@ -332,6 +366,7 @@ export class ConnectionManager extends Context.Tag("@agentpane/ConnectionManager
             sessionUpdate: "connected",
             configOptions: agentConn.configOptions,
             availableCommands: agentConn.availableCommands,
+            modes: agentConn.modes,
           })
 
           return { agentSessionId: resolvedAgentSessionId! }
@@ -443,6 +478,52 @@ export class ConnectionManager extends Context.Tag("@agentpane/ConnectionManager
         }
       )
 
+      const getModes = Effect.fn("ConnectionManager.getModes")(
+        function* (sessionId: string) {
+          const conn = yield* requireConnection(connections, sessionId)
+          return conn.modes
+        }
+      )
+
+      const setMode = Effect.fn("ConnectionManager.setMode")(
+        function* (sessionId: string, modeId: string) {
+          const conn = yield* requireConnection(connections, sessionId)
+
+          const setSessionMode = (conn.connection as unknown as Record<string, unknown>).setSessionMode
+          if (typeof setSessionMode !== "function") {
+            return yield* new AcpConnectionError({
+              message: "Agent does not support mode switching",
+            })
+          }
+
+          const response = yield* Effect.tryPromise({
+            try: () =>
+              (setSessionMode as (args: { sessionId: string; modeId: string }) => Promise<unknown>)({
+                sessionId: conn.agentSessionId,
+                modeId,
+              }),
+            catch: (err) =>
+              new AcpConnectionError({
+                message: `Failed to set mode: ${err}`,
+              }),
+          })
+
+          const nextModes = (response as Record<string, unknown>).modes
+          if (nextModes && typeof nextModes === "object") {
+            conn.modes = nextModes as Record<string, unknown>
+          } else {
+            conn.modes = { ...(conn.modes ?? {}), currentModeId: modeId }
+          }
+
+          eventHub.broadcast(sessionId, {
+            sessionUpdate: "current_mode_update",
+            ...(conn.modes ?? {}),
+          })
+
+          return conn.modes
+        }
+      )
+
       const listAgentSessions = Effect.fn("ConnectionManager.listAgentSessions")(
         function* (sessionId: string, cwd?: string) {
           const conn = yield* requireConnection(connections, sessionId)
@@ -507,6 +588,8 @@ export class ConnectionManager extends Context.Tag("@agentpane/ConnectionManager
         getAvailableCommands,
         getConfigOptions,
         setConfigOption,
+        getModes,
+        setMode,
         listAgentSessions,
         stats,
       })

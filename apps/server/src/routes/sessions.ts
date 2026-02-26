@@ -6,7 +6,9 @@ import { Effect, Exit } from "effect"
 import { AppRuntime } from "../lib/runtime.js"
 import { SessionRepo } from "../lib/session-repo.js"
 import { AcpClient } from "../lib/acp-client.js"
+import type { PromptInputBlock } from "../lib/prompt-engine.js"
 import {
+  type JsonObject,
   asNonEmptyString,
   asOptionalString,
   asString,
@@ -26,8 +28,18 @@ const runEffect = async <A>(
   return Exit.match(exit, {
     onFailure: (cause) => {
       if (cause._tag === "Fail") {
-        const err = cause.error as { httpStatus?: number; httpMessage?: string }
-        if (err.httpStatus) return c.json({ error: err.httpMessage ?? "Error" }, err.httpStatus as ContentfulStatusCode)
+        const err = cause.error as {
+          httpStatus?: number
+          httpMessage?: string
+          provider?: string
+          authMethods?: unknown
+        }
+        if (err.httpStatus) {
+          const payload: Record<string, unknown> = { error: err.httpMessage ?? "Error" }
+          if (typeof err.provider === "string") payload.provider = err.provider
+          if (Array.isArray(err.authMethods)) payload.authMethods = err.authMethods
+          return c.json(payload, err.httpStatus as ContentfulStatusCode)
+        }
       }
       return c.json({ error: "Internal error" }, 500)
     },
@@ -36,6 +48,66 @@ const runEffect = async <A>(
 }
 
 const app = new Hono()
+
+type ParseResult =
+  | { ok: true; blocks: ReadonlyArray<PromptInputBlock> }
+  | { ok: false; error: string }
+
+const parsePromptBlocks = (body: JsonObject): ParseResult => {
+  const content = asNonEmptyString(body.content)
+  const rawBlocks = body.blocks
+
+  if (content && rawBlocks !== undefined) {
+    return { ok: false, error: "Provide either content or blocks, not both" }
+  }
+
+  if (content) {
+    return { ok: true, blocks: [{ type: "text", text: content }] }
+  }
+
+  if (!Array.isArray(rawBlocks)) {
+    return { ok: false, error: "content or blocks is required" }
+  }
+
+  const parsed: Array<PromptInputBlock> = []
+  for (const item of rawBlocks) {
+    if (!item || typeof item !== "object") {
+      return { ok: false, error: "blocks must contain objects" }
+    }
+
+    const block = item as Record<string, unknown>
+    const type = asString(block.type)
+    if (type === "text") {
+      const text = asNonEmptyString(block.text)
+      if (!text) return { ok: false, error: "text block requires text" }
+      parsed.push({ type: "text", text })
+      continue
+    }
+
+    if (type === "resource_link") {
+      const uri = asNonEmptyString(block.uri)
+      const name = asNonEmptyString(block.name)
+      if (!uri || !name) return { ok: false, error: "resource_link block requires uri and name" }
+      parsed.push({
+        type: "resource_link",
+        uri,
+        name,
+        description: asOptionalString(block.description) ?? null,
+        mimeType: asOptionalString(block.mimeType) ?? null,
+        title: asOptionalString(block.title) ?? null,
+      })
+      continue
+    }
+
+    return { ok: false, error: `Unsupported block type: ${String(type ?? "unknown")}` }
+  }
+
+  if (parsed.length === 0) {
+    return { ok: false, error: "blocks must not be empty" }
+  }
+
+  return { ok: true, blocks: parsed }
+}
 
 // GET /sessions — list all sessions with connection status
 app.get("/", async (c) => runEffect(c,
@@ -148,9 +220,9 @@ app.get("/:id/token-usage", async (c) => runEffect(c,
 // POST /sessions/:id/prompt — send a prompt to the agent
 app.post("/:id/prompt", async (c) => {
   const body = await readJsonObject(c)
-  const content = asNonEmptyString(body.content)
-  if (!content) return badRequest(c, "content is required")
-  return runEffect(c, Effect.flatMap(AcpClient, (acp) => acp.prompt(c.req.param("id"), content)))
+  const parsed = parsePromptBlocks(body)
+  if (!parsed.ok) return badRequest(c, parsed.error)
+  return runEffect(c, Effect.flatMap(AcpClient, (acp) => acp.prompt(c.req.param("id"), parsed.blocks)))
 })
 
 // POST /sessions/:id/permission — respond to a permission request
@@ -241,6 +313,7 @@ app.post("/:id/connect", async (c) => {
   const body = await readJsonObject(c)
   const bodyAgentType = asOptionalString(body.agent_type)
   const bodyCwd = asOptionalString(body.cwd)
+  const authMethodId = asOptionalString(body.authMethodId)
   const id = c.req.param("id")
   return runEffect(c, Effect.gen(function* () {
     const repo = yield* SessionRepo
@@ -249,8 +322,23 @@ app.post("/:id/connect", async (c) => {
       ? yield* repo.updateConfig(id, bodyAgentType, bodyCwd)
       : yield* repo.get(id)
     acp.ensureBroadcaster(id)
-    return yield* acp.connect(id, session.cwd, session.agent_type, session.agent_session_id)
+    return yield* acp.connect(id, session.cwd, session.agent_type, session.agent_session_id, authMethodId)
   }))
+})
+
+// GET /sessions/:id/mode — get current mode state
+app.get("/:id/mode", async (c) => runEffect(c,
+  Effect.flatMap(AcpClient, (acp) => acp.getModes(c.req.param("id")))
+))
+
+// POST /sessions/:id/mode — set session mode
+app.post("/:id/mode", async (c) => {
+  const body = await readJsonObject(c)
+  const modeId = asNonEmptyString(body.modeId)
+  if (!modeId) return badRequest(c, "modeId is required")
+  return runEffect(c,
+    Effect.flatMap(AcpClient, (acp) => acp.setMode(c.req.param("id"), modeId))
+  )
 })
 
 // GET /sessions/:id/agent-sessions — list agent's session history

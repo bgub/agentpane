@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react"
+import { useState } from "react"
 import { Check } from "lucide-react"
 import { Streamdown } from "streamdown"
 import type { ToolCallState, PermissionOption, DiffLine } from "./types"
@@ -21,19 +21,19 @@ function formatOutput(raw: unknown): string {
 import { api } from "@/lib/api"
 import { markdownPlugins, markdownComponents } from "./markdown"
 
-export function EditDiffView({ rawInput }: { rawInput: unknown }) {
+function EditDiffView({ rawInput }: { rawInput: unknown }) {
   const changes = parseEditChanges(rawInput)
   if (!changes) return null
 
   return (
     <div className="space-y-2">
-      {changes.map((change, i) => {
+      {changes.map((change, idx) => {
         const lines: DiffLine[] = change.oldContent
           ? computeLineDiff(change.oldContent, change.content)
           : change.content.split("\n").map((l): DiffLine => ({ type: "add", content: l }))
 
         return (
-          <div key={i}>
+          <div key={idx}>
             {changes.length > 1 && (
               <div className="text-[10px] text-[var(--t-dim)] mb-1 truncate">{change.path}</div>
             )}
@@ -73,7 +73,7 @@ function MarkdownDetailView({ content }: { content: string }) {
   )
 }
 
-export function PermissionButtons({
+function PermissionButtons({
   sessionId,
   requestId,
   options,
@@ -176,10 +176,14 @@ export function ToolCallBox({ state, sessionId }: { state: ToolCallState; sessio
   const hasPendingPermission = !!state.permissionRequest
   const [expanded, setExpanded] = useState(isEdit || !!planContent || hasPendingPermission)
 
-  // Auto-expand when permission request arrives
-  useEffect(() => {
-    if (hasPendingPermission) setExpanded(true)
-  }, [hasPendingPermission])
+  // Auto-expand when permission request arrives (render-time state adjustment)
+  const [prevHasPendingPermission, setPrevHasPendingPermission] = useState(hasPendingPermission)
+  if (hasPendingPermission && !prevHasPendingPermission) {
+    setPrevHasPendingPermission(hasPendingPermission)
+    setExpanded(true)
+  } else if (prevHasPendingPermission !== hasPendingPermission) {
+    setPrevHasPendingPermission(hasPendingPermission)
+  }
 
   // Hide Plan subagent — the plan is shown by ExitPlanMode below
   if (isPlanSubagent(state.rawInput)) return null

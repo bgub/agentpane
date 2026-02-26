@@ -7,12 +7,28 @@ import { estimateTokenCount } from "./acp-types.js"
 import { WriteQueue } from "./write-queue.js"
 import type { WriteOp } from "./write-ops.js"
 
+export interface PromptTextBlock {
+  readonly type: "text"
+  readonly text: string
+}
+
+export interface PromptResourceLinkBlock {
+  readonly type: "resource_link"
+  readonly uri: string
+  readonly name: string
+  readonly description?: string | null
+  readonly mimeType?: string | null
+  readonly title?: string | null
+}
+
+export type PromptInputBlock = PromptTextBlock | PromptResourceLinkBlock
+
 export class PromptEngine extends Context.Tag("@agentpane/PromptEngine")<
   PromptEngine,
   {
     readonly prompt: (
       sessionId: string,
-      content: string
+      blocks: ReadonlyArray<PromptInputBlock>
     ) => Effect.Effect<{ userTurnId: string; assistantTurnId: string }, AcpConnectionError>
   }
 >() {
@@ -26,7 +42,7 @@ export class PromptEngine extends Context.Tag("@agentpane/PromptEngine")<
       const runPromise = Runtime.runPromise(runtime)
 
       const prompt = Effect.fn("PromptEngine.prompt")(
-        function* (sessionId: string, content: string) {
+        function* (sessionId: string, blocks: ReadonlyArray<PromptInputBlock>) {
           const conn = yield* connections.get(sessionId)
 
           if (conn.prompting) {
@@ -35,10 +51,38 @@ export class PromptEngine extends Context.Tag("@agentpane/PromptEngine")<
             })
           }
 
+          if (blocks.length === 0) {
+            return yield* new AcpConnectionError({
+              message: "Prompt content is required",
+            })
+          }
+
           const now = Date.now()
           const userTurnId = crypto.randomUUID()
           const assistantTurnId = crypto.randomUUID()
-          const userTokens = estimateTokenCount(content)
+          const textBlocks = blocks.filter((block): block is PromptTextBlock => block.type === "text")
+          const promptText = textBlocks.map((block) => block.text).join("\n")
+          const serializedPrompt = JSON.stringify(blocks)
+          const userTokens = estimateTokenCount(promptText || serializedPrompt)
+
+          const userBlockOps: Array<WriteOp> = blocks.map((block) => {
+            if (block.type === "text") {
+              return {
+                _tag: "AddMessageBlock",
+                sessionId,
+                turnId: userTurnId,
+                kind: "text",
+                content: block.text,
+              }
+            }
+            return {
+              _tag: "AddMessageBlock",
+              sessionId,
+              turnId: userTurnId,
+              kind: "resource_link",
+              content: JSON.stringify(block),
+            }
+          })
 
           const initialOps: ReadonlyArray<WriteOp> = [
             {
@@ -55,13 +99,7 @@ export class PromptEngine extends Context.Tag("@agentpane/PromptEngine")<
               role: "assistant",
               createdAt: now + 1,
             },
-            {
-              _tag: "AddMessageBlock",
-              sessionId,
-              turnId: userTurnId,
-              kind: "text",
-              content,
-            },
+            ...userBlockOps,
             {
               _tag: "CompleteTurn",
               sessionId,
@@ -132,12 +170,12 @@ export class PromptEngine extends Context.Tag("@agentpane/PromptEngine")<
           conn.connection
             .prompt({
               sessionId: conn.agentSessionId,
-              prompt: [{ type: "text", text: content }],
+              prompt: [...blocks],
             })
             .then(async (response) => {
               const reason = response.stopReason || "end_turn"
               const usage = response.usage
-              const promptTokens = usage?.inputTokens ?? estimateTokenCount(content)
+              const promptTokens = usage?.inputTokens ?? estimateTokenCount(promptText || serializedPrompt)
               const completionTokens = usage?.outputTokens ?? estimateTokenCount(conn.accumulatedText)
               const totalTokens = usage?.totalTokens ?? promptTokens + completionTokens
               await runPromise(
@@ -151,7 +189,7 @@ export class PromptEngine extends Context.Tag("@agentpane/PromptEngine")<
               eventHub.broadcast(sessionId, { sessionUpdate: "done", stopReason: reason })
             })
             .catch(async (err) => {
-              const promptTokens = estimateTokenCount(content)
+              const promptTokens = estimateTokenCount(promptText || serializedPrompt)
               const completionTokens = estimateTokenCount(conn.accumulatedText)
               await runPromise(
                 persistCompletion("error", {

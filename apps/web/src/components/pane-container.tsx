@@ -10,19 +10,17 @@ import { PaneView } from "./pane-view"
 export function PaneContainer() {
   const { backendStatus, showSetup } = useSession()
   const { layout, setPaneSizes, openSessionInNewPane } = useLayout()
-  const [sidebarDragging, setSidebarDragging] = useState(false)
-  const [splitDropHover, setSplitDropHover] = useState(false)
+  const [dragState, setDragState] = useState({ sidebarDragging: false, splitDropHover: false })
 
   // Listen globally for sidebar drag start/end to reveal the split drop zone
   useEffect(() => {
     const handleDragStart = (e: globalThis.DragEvent) => {
       if (e.dataTransfer?.types.includes("application/x-sidebar-session")) {
-        setSidebarDragging(true)
+        setDragState((prev) => ({ ...prev, sidebarDragging: true }))
       }
     }
     const handleDragEnd = () => {
-      setSidebarDragging(false)
-      setSplitDropHover(false)
+      setDragState({ sidebarDragging: false, splitDropHover: false })
     }
     document.addEventListener("dragstart", handleDragStart)
     document.addEventListener("dragend", handleDragEnd)
@@ -43,15 +41,14 @@ export function PaneContainer() {
     if (!e.dataTransfer.types.includes("application/x-sidebar-session")) return
     e.preventDefault()
     e.dataTransfer.dropEffect = "copy"
-    setSplitDropHover(true)
+    setDragState((prev) => ({ ...prev, splitDropHover: true }))
   }
 
-  const handleSplitDragLeave = () => setSplitDropHover(false)
+  const handleSplitDragLeave = () => setDragState((prev) => ({ ...prev, splitDropHover: false }))
 
   const handleSplitDrop = (e: DragEvent) => {
     e.preventDefault()
-    setSplitDropHover(false)
-    setSidebarDragging(false)
+    setDragState({ sidebarDragging: false, splitDropHover: false })
     const raw = e.dataTransfer.getData("application/x-sidebar-session")
     if (!raw) return
     try {
@@ -104,7 +101,7 @@ export function PaneContainer() {
   })
 
   const canSplit = layout.panes.length < 4
-  const showSplitZone = canSplit && sidebarDragging
+  const showSplitZone = canSplit && dragState.sidebarDragging
 
   return (
     <div className="flex-1 min-w-0 min-h-0 flex">
@@ -126,16 +123,16 @@ export function PaneContainer() {
           onDragLeave={handleSplitDragLeave}
           onDrop={handleSplitDrop}
           className={`shrink-0 flex items-center justify-center transition-all duration-150 ${
-            splitDropHover
+            dragState.splitDropHover
               ? "w-24 bg-[var(--t-accent)]/10 border-l-2 border-[var(--t-accent)]"
               : "w-8 bg-[var(--t-surface)]/50 border-l border-dashed border-[var(--t-dim)]"
           }`}
         >
           <div className={`flex flex-col items-center gap-1.5 transition-colors ${
-            splitDropHover ? "text-[var(--t-accent)]" : "text-[var(--t-dim)]"
+            dragState.splitDropHover ? "text-[var(--t-accent)]" : "text-[var(--t-dim)]"
           }`}>
             <Columns2 className="size-4" />
-            {splitDropHover && <span className="text-[10px] font-medium">Split</span>}
+            {dragState.splitDropHover && <span className="text-[10px] font-medium">Split</span>}
           </div>
         </button>
       )}

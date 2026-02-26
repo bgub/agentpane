@@ -1,15 +1,32 @@
-import { useState, useReducer, useRef, useEffect } from "react"
+import { useReducer, useRef, useEffect } from "react"
 import { Streamdown } from "streamdown"
 import { useQueryClient } from "@tanstack/react-query"
 import { useConversationQuery, queryKeys } from "@/lib/queries"
 import { api } from "@/lib/api"
-import type { Session } from "@/lib/types"
+import type { Session, SessionMode, SessionModesState } from "@/lib/types"
 import type { TurnData, ChatViewProps, ConfigOption, AvailableCommand } from "./types"
-import { parseToolCallBlock, mergeToolCallUpdates } from "./utils"
+import { parseToolCallBlock, parseResourceLinkBlock, mergeToolCallUpdates } from "./utils"
 import { chatReducer, INITIAL_CHAT_STATE } from "./streaming"
 import { ToolCallBox } from "./tool-call-box"
 import { PlanView } from "./plan-view"
 import { markdownPlugins, markdownComponents } from "./markdown"
+
+function ResourceLinkCard({ block }: { block: { id: string; content: string } }) {
+  const link = parseResourceLinkBlock(block)
+  if (!link) return null
+  return (
+    <a
+      href={link.uri}
+      target="_blank"
+      rel="noreferrer"
+      className="block rounded-md border border-[var(--t-border)] px-2.5 py-2 hover:border-[var(--t-accent)] transition-colors"
+      title={link.description ?? link.uri}
+    >
+      <div className="text-xs text-[var(--t-accent)] truncate">{link.name}</div>
+      <div className="text-[11px] text-[var(--t-muted)] truncate">{link.title ?? link.uri}</div>
+    </a>
+  )
+}
 
 export default function ChatView({
   sessionId,
@@ -17,6 +34,7 @@ export default function ChatView({
   promptError,
   onConfigOptionsChange,
   onAvailableCommandsChange,
+  onModesChange,
 }: ChatViewProps) {
   const queryClient = useQueryClient()
   const { data: queriedTurns = [] } = useConversationQuery(sessionId)
@@ -31,16 +49,6 @@ export default function ChatView({
   const lastPromptTsRef = useRef(0)
   const lastErrorTsRef = useRef(0)
   const latestEventIdRef = useRef<number | undefined>(undefined)
-
-  // Synchronous reset on session switch (clears streaming state before paint)
-  const [prevSessionId, setPrevSessionId] = useState(sessionId)
-  if (prevSessionId !== sessionId) {
-    setPrevSessionId(sessionId)
-    dispatch({ type: 'RESET' })
-    lastPromptTsRef.current = lastSentPrompt?.ts ?? 0
-    lastErrorTsRef.current = promptError?.ts ?? 0
-    latestEventIdRef.current = undefined
-  }
 
   // Merge query turns + optimistic turn (if not yet in query data)
   const allTurns = optimisticTurn && !turns.some((t) => t.id === optimisticTurn.id)
@@ -100,69 +108,82 @@ export default function ChatView({
     const es = new EventSource(api.eventsUrl(sessionId))
 
     es.onmessage = (event) => {
+      let data: Record<string, unknown>
       try {
-        const data = JSON.parse(event.data) as Record<string, unknown>
-        const eventType = data.sessionUpdate as string
-        const eventId = event.lastEventId ? parseInt(event.lastEventId, 10) : undefined
-
-        // Status event always processed first — it sets the replay watermark
-        if (eventType === "status") {
-          latestEventIdRef.current = typeof data.latestEventId === "number" ? data.latestEventId : undefined
-          dispatch({ type: 'SSE_STATUS', prompting: data.prompting as boolean })
-          patchSession({ prompting: data.prompting as boolean })
-          if (data.replayGap === true) {
-            queryClient.invalidateQueries({ queryKey: queryKeys.conversation(sessionId) })
-            queryClient.invalidateQueries({ queryKey: queryKeys.tokenUsage(sessionId) })
-          }
-          return
-        }
-
-        // Skip replayed ring buffer events (they predate our connection's watermark)
-        if (eventId != null && latestEventIdRef.current != null && eventId <= latestEventIdRef.current) return
-
-        if (eventType === "connected") {
-          patchSession({ connected: true })
-          onConfigOptionsChange?.((data.configOptions as ConfigOption[]) ?? [])
-          onAvailableCommandsChange?.((data.availableCommands as AvailableCommand[]) ?? [])
-        } else if (eventType === "config_option_update") {
-          onConfigOptionsChange?.((data.configOptions as ConfigOption[]) ?? [])
-        } else if (eventType === "available_commands_update") {
-          onAvailableCommandsChange?.((data.availableCommands as AvailableCommand[]) ?? [])
-        } else if (eventType === "prompt_started") {
-          dispatch({ type: 'SSE_PROMPT_STARTED' })
-          patchSession({ prompting: true })
-        } else if (eventType === "done") {
-          dispatch({ type: 'SSE_PROMPT_FINISHED' })
-          patchSession({ prompting: false })
-          Promise.all([
-            queryClient.invalidateQueries({ queryKey: queryKeys.conversation(sessionId) }),
-            queryClient.invalidateQueries({ queryKey: queryKeys.tokenUsage(sessionId) }),
-          ]).then(() => dispatch({ type: 'SSE_DONE' }))
-        } else if (eventType === "error") {
-          dispatch({ type: 'SSE_ERROR', message: `Error: ${data.message}` })
-          patchSession({ prompting: false })
-          queryClient.invalidateQueries({ queryKey: queryKeys.tokenUsage(sessionId) })
-        } else if (eventType === "session_info_update") {
-          if (typeof data.title === "string") {
-            patchSession({ name: data.title })
-          }
-        } else if (eventType === "disconnected") {
-          dispatch({ type: 'SSE_DISCONNECTED' })
-          patchSession({ connected: false, prompting: false })
-          onConfigOptionsChange?.([])
-          onAvailableCommandsChange?.([])
-        } else {
-          dispatch({ type: 'SSE_STREAMING', data })
-        }
+        data = JSON.parse(event.data) as Record<string, unknown>
       } catch {
-        // Ignore parse errors
+        return
+      }
+
+      const eventType = data.sessionUpdate as string
+      const lastEventId = event.lastEventId
+      const eventId = lastEventId ? parseInt(lastEventId, 10) : undefined
+
+      if (eventType === "status") {
+        const latestId = data.latestEventId
+        latestEventIdRef.current = typeof latestId === "number" ? latestId : undefined
+        dispatch({ type: 'SSE_STATUS', prompting: data.prompting as boolean })
+        patchSession({ prompting: data.prompting as boolean })
+        if (data.replayGap === true) {
+          queryClient.invalidateQueries({ queryKey: queryKeys.conversation(sessionId) })
+          queryClient.invalidateQueries({ queryKey: queryKeys.tokenUsage(sessionId) })
+        }
+        return
+      }
+
+      if (eventId != null && latestEventIdRef.current != null && eventId <= latestEventIdRef.current) return
+
+      if (eventType === "connected") {
+        patchSession({ connected: true })
+        const configOpts = (data.configOptions as ConfigOption[]) ?? []
+        const availCmds = (data.availableCommands as AvailableCommand[]) ?? []
+        const modes = (data.modes as SessionModesState | null) ?? null
+        onConfigOptionsChange?.(configOpts)
+        onAvailableCommandsChange?.(availCmds)
+        onModesChange?.(modes)
+      } else if (eventType === "config_option_update") {
+        onConfigOptionsChange?.((data.configOptions as ConfigOption[]) ?? [])
+      } else if (eventType === "available_commands_update") {
+        onAvailableCommandsChange?.((data.availableCommands as AvailableCommand[]) ?? [])
+      } else if (eventType === "current_mode_update") {
+        const { currentModeId, modes: modesList } = data as Record<string, unknown>
+        const modesState: SessionModesState = {}
+        if (typeof currentModeId === "string") modesState.currentModeId = currentModeId
+        if (Array.isArray(modesList)) modesState.modes = modesList as SessionMode[]
+        onModesChange?.(modesState)
+      } else if (eventType === "prompt_started") {
+        dispatch({ type: 'SSE_PROMPT_STARTED' })
+        patchSession({ prompting: true })
+      } else if (eventType === "done") {
+        dispatch({ type: 'SSE_PROMPT_FINISHED' })
+        patchSession({ prompting: false })
+        Promise.all([
+          queryClient.invalidateQueries({ queryKey: queryKeys.conversation(sessionId) }),
+          queryClient.invalidateQueries({ queryKey: queryKeys.tokenUsage(sessionId) }),
+        ]).then(() => dispatch({ type: 'SSE_DONE' }))
+      } else if (eventType === "error") {
+        dispatch({ type: 'SSE_ERROR', message: `Error: ${data.message}` })
+        patchSession({ prompting: false })
+        queryClient.invalidateQueries({ queryKey: queryKeys.tokenUsage(sessionId) })
+      } else if (eventType === "session_info_update") {
+        if (typeof data.title === "string") {
+          patchSession({ name: data.title })
+        }
+      } else if (eventType === "disconnected") {
+        dispatch({ type: 'SSE_DISCONNECTED' })
+        patchSession({ connected: false, prompting: false })
+        onConfigOptionsChange?.([])
+        onAvailableCommandsChange?.([])
+        onModesChange?.(null)
+      } else {
+        dispatch({ type: 'SSE_STREAMING', data })
       }
     }
 
     es.onerror = () => {}
 
     return () => es.close()
-  }, [sessionId, queryClient, onConfigOptionsChange, onAvailableCommandsChange])
+  }, [sessionId, queryClient, onConfigOptionsChange, onAvailableCommandsChange, onModesChange])
 
   return (
     <div ref={scrollRef} className="h-full overflow-y-auto flex flex-col-reverse">
@@ -173,18 +194,25 @@ export default function ChatView({
               <div className="mt-5 mb-3 -mx-3 px-3 py-2.5 rounded-lg bg-[var(--t-elevated)]">
                 <div className="flex items-start gap-2.5">
                   <span className="shrink-0 text-sm font-mono text-[var(--t-accent)] select-none leading-relaxed">&#10095;</span>
-                  <div className="text-sm leading-relaxed whitespace-pre-wrap text-[var(--t-white)]">
+                  <div className="min-w-0 flex-1 space-y-2">
+                    {(() => {
+                      const text = turn.blocks.filter((b) => b.kind === "text").map((b) => b.content).join("\n")
+                      return text && (
+                        <div className="text-sm leading-relaxed whitespace-pre-wrap text-[var(--t-white)]">
+                          {text}
+                        </div>
+                      )
+                    })()}
                     {turn.blocks
-                      .filter((b) => b.kind === "text")
-                      .map((b) => b.content)
-                      .join("\n")}
+                      .filter((b) => b.kind === "resource_link")
+                      .map((b) => <ResourceLinkCard key={b.id} block={b} />)}
                   </div>
                 </div>
               </div>
             ) : (
               <div className="py-1">
                 {mergeToolCallUpdates(turn.blocks)
-                  .filter((b) => b.kind === "text" || b.kind === "tool_call")
+                  .filter((b) => b.kind === "text" || b.kind === "tool_call" || b.kind === "resource_link")
                   .map((b) =>
                     b.kind === "text" ? (
                       <div
@@ -195,9 +223,13 @@ export default function ChatView({
                           {b.content}
                         </Streamdown>
                       </div>
-                    ) : (
+                    ) : b.kind === "tool_call" ? (
                       <div key={b.id} className="pl-5 border-l-2 border-[var(--t-border)]">
                         <ToolCallBox state={parseToolCallBlock(b)} sessionId={sessionId} />
+                      </div>
+                    ) : (
+                      <div key={b.id} className="pl-5 border-l-2 border-[var(--t-border)]">
+                        <ResourceLinkCard block={b} />
                       </div>
                     )
                   )}
@@ -214,26 +246,30 @@ export default function ChatView({
         {/* Streaming assistant output */}
         {hasStreamingContent && (
           <div className="py-1">
-            {streamingBlocks.map((block, i) =>
-              block.type === "text" ? (
+            {streamingBlocks.map((block, idx) => {
+              const isLast = idx === streamingBlocks.length - 1
+              const key = block.type === "text" ? block.id
+                : block.type === "plan" ? "plan"
+                : block.state.toolCallId
+              return block.type === "text" ? (
                 <div
-                  key={`stream-${i}`}
+                  key={key}
                   className="text-sm leading-[1.7] text-[var(--t-text)] pl-5 border-l-2 border-[var(--t-accent)]"
                 >
-                  <Streamdown plugins={markdownPlugins} components={markdownComponents} mode={i === streamingBlocks.length - 1 ? "streaming" : "static"} isAnimating={i === streamingBlocks.length - 1}>
+                  <Streamdown plugins={markdownPlugins} components={markdownComponents} mode={isLast ? "streaming" : "static"} isAnimating={isLast}>
                     {block.content}
                   </Streamdown>
                 </div>
               ) : block.type === "plan" ? (
-                <div key={`stream-${i}`} className="pl-5 border-l-2 border-[var(--t-accent)]">
+                <div key={key} className="pl-5 border-l-2 border-[var(--t-accent)]">
                   <PlanView entries={block.entries} />
                 </div>
               ) : (
-                <div key={`stream-${i}`} className="pl-5 border-l-2 border-[var(--t-accent)]">
+                <div key={key} className="pl-5 border-l-2 border-[var(--t-accent)]">
                   <ToolCallBox state={block.state} sessionId={sessionId} />
                 </div>
               )
-            )}
+            })}
           </div>
         )}
 

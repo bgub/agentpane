@@ -1,3 +1,7 @@
+export type PromptInputBlock =
+  | { type: "text"; text: string }
+  | { type: "resource_link"; uri: string; name: string; description?: string | null; mimeType?: string | null; title?: string | null }
+
 export const api = {
   health: (): Promise<Response> =>
     fetch("/api/health", { signal: AbortSignal.timeout(2000) }),
@@ -32,11 +36,11 @@ export const api = {
     tokenUsage: (id: string): Promise<Response> =>
       fetch(`/api/sessions/${id}/token-usage`),
 
-    prompt: (id: string, content: string): Promise<Response> =>
+    prompt: (id: string, content: string | { blocks: PromptInputBlock[] }): Promise<Response> =>
       fetch(`/api/sessions/${id}/prompt`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ content }),
+        body: JSON.stringify(typeof content === "string" ? { content } : content),
       }),
 
     cancel: (id: string): Promise<Response> =>
@@ -49,7 +53,7 @@ export const api = {
         body: JSON.stringify({ requestId, optionId }),
       }),
 
-    connect: (id: string, body?: { agent_type?: string; cwd?: string }): Promise<Response> =>
+    connect: (id: string, body?: { agent_type?: string; cwd?: string; authMethodId?: string }): Promise<Response> =>
       fetch(`/api/sessions/${id}/connect`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -73,6 +77,16 @@ export const api = {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ configId, value }),
+      }),
+
+    mode: (id: string): Promise<Response> =>
+      fetch(`/api/sessions/${id}/mode`),
+
+    setMode: (id: string, modeId: string): Promise<Response> =>
+      fetch(`/api/sessions/${id}/mode`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ modeId }),
       }),
   },
 

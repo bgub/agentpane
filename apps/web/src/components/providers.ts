@@ -1,4 +1,4 @@
-export interface ProviderInfo {
+interface ProviderInfo {
   readonly id: string
   readonly name: string
   readonly shortLabel: string

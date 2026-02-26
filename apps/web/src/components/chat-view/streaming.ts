@@ -2,6 +2,9 @@ import type { StreamingBlock, ToolCallState, PlanEntry, PermissionOption } from 
 
 // --- Immutable streaming block helpers ---
 
+let textBlockCounter = 0
+function nextTextId() { return `text-${++textBlockCounter}` }
+
 function findToolCallIndex(blocks: StreamingBlock[], toolCallId: string): number {
   return blocks.findIndex((b) => b.type === "tool_call" && b.state.toolCallId === toolCallId)
 }
@@ -20,7 +23,7 @@ function patchToolCallState(state: ToolCallState, data: Record<string, unknown>)
   return next
 }
 
-export function applyEventToBlocks(
+function applyEventToBlocks(
   blocks: StreamingBlock[],
   data: Record<string, unknown>
 ): StreamingBlock[] {
@@ -30,9 +33,9 @@ export function applyEventToBlocks(
     const text = (data.content as Record<string, unknown>).text as string
     const last = blocks[blocks.length - 1]
     if (last?.type === "text") {
-      return [...blocks.slice(0, -1), { type: "text", content: last.content + text }]
+      return [...blocks.slice(0, -1), { type: "text", id: last.id, content: last.content + text }]
     }
-    return [...blocks, { type: "text", content: text }]
+    return [...blocks, { type: "text", id: nextTextId(), content: text }]
   }
 
   if (eventType === "tool_call" || eventType === "tool_call_update") {
@@ -110,7 +113,7 @@ export function applyEventToBlocks(
 
 // --- Chat state reducer (streaming-only) ---
 
-export interface ChatState {
+interface ChatState {
   streamingBlocks: StreamingBlock[]
   prompting: boolean
   optimisticTurn: import("./types").TurnData | null
@@ -128,14 +131,12 @@ type ChatAction =
   | { type: 'APPEND_ERROR'; message: string }
   | { type: 'RESET' }
 
-export type { ChatAction }
-
-export function appendError(blocks: StreamingBlock[], message: string): StreamingBlock[] {
+function appendError(blocks: StreamingBlock[], message: string): StreamingBlock[] {
   const last = blocks[blocks.length - 1]
   if (last?.type === "text") {
-    return [...blocks.slice(0, -1), { type: "text", content: last.content + `\n\n${message}` }]
+    return [...blocks.slice(0, -1), { type: "text", id: last.id, content: last.content + `\n\n${message}` }]
   }
-  return [...blocks, { type: "text", content: message }]
+  return [...blocks, { type: "text", id: nextTextId(), content: message }]
 }
 
 export const INITIAL_CHAT_STATE: ChatState = { streamingBlocks: [], prompting: false, optimisticTurn: null }

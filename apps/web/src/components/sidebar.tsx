@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, Fragment, type KeyboardEvent, type DragEvent } from "react"
+import { useState, useEffect, type KeyboardEvent, type DragEvent } from "react"
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -13,6 +13,111 @@ import { useSession } from "./session-provider"
 import { useLayout } from "./layout-provider"
 import type { Session } from "@/lib/types"
 import { StatusDot } from "./status-dot"
+
+function SessionItem({
+  session,
+  isHistory,
+  isActive,
+  isOpenInAnyPane,
+  editingId,
+  editValue,
+  onEditValueChange,
+  onEditKeyDown,
+  onEditBlur,
+  onClick,
+  onStartRename,
+  onDelete,
+}: {
+  session: Session
+  isHistory: boolean
+  isActive: boolean
+  isOpenInAnyPane: boolean
+  editingId: string | null
+  editValue: string
+  onEditValueChange: (value: string) => void
+  onEditKeyDown: (e: KeyboardEvent<HTMLInputElement>) => void
+  onEditBlur: () => void
+  onClick: () => void
+  onStartRename: () => void
+  onDelete: () => void
+}) {
+  const handleDragStart = (e: DragEvent) => {
+    e.dataTransfer.setData(DRAG_TYPES.sidebarSession, JSON.stringify({ sessionId: session.id }))
+    e.dataTransfer.effectAllowed = "copyMove"
+  }
+
+  return (
+    <div
+      role="button"
+      tabIndex={0}
+      draggable={editingId !== session.id}
+      onDragStart={handleDragStart}
+      onClick={onClick}
+      onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onClick() } }}
+      className={`group flex items-center gap-2.5 px-3 py-2 cursor-pointer text-[13px] transition-colors ${
+        isActive
+          ? "bg-[var(--t-elevated)] text-[var(--t-white)] border-l-2 border-l-[var(--t-accent)]"
+          : isOpenInAnyPane
+            ? "bg-[var(--t-bg)]/50 text-[var(--t-text)] hover:bg-[var(--t-bg)] hover:text-[var(--t-bright)] border-l-2 border-l-[var(--t-dim)]"
+            : isHistory
+              ? "text-[var(--t-muted)] hover:bg-[var(--t-bg)] hover:text-[var(--t-text)] border-l-2 border-l-transparent"
+              : "text-[var(--t-text)] hover:bg-[var(--t-bg)] hover:text-[var(--t-bright)] border-l-2 border-l-transparent"
+      }`}
+    >
+      {editingId === session.id ? (
+        <input
+          autoFocus
+          value={editValue}
+          onChange={(e) => onEditValueChange(e.target.value)}
+          onFocus={(e) => e.target.select()}
+          onKeyDown={onEditKeyDown}
+          onBlur={onEditBlur}
+          className="flex-1 bg-[var(--t-bg)] text-[var(--t-white)] text-[13px] outline-none border border-[var(--t-dim)] rounded px-1.5 py-0.5"
+          spellCheck={false}
+        />
+      ) : (
+        <>
+          <StatusDot session={session} />
+          <span className="flex-1 truncate">{session.name}</span>
+          {session.agent_type && (
+            <span className="shrink-0 text-[10px] font-mono font-medium tracking-wide text-[var(--t-muted)]">
+              {PROVIDER_INFO[session.agent_type]?.shortLabel ?? session.agent_type.toUpperCase()}
+            </span>
+          )}
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <button
+                onClick={(e) => e.stopPropagation()}
+                className="opacity-0 group-hover:opacity-100 data-[state=open]:opacity-100 shrink-0 cursor-pointer text-[var(--t-dim)] hover:text-[var(--t-bright)] hover:bg-[var(--t-dim)]/20 data-[state=open]:text-[var(--t-bright)] data-[state=open]:bg-[var(--t-dim)]/20 transition-colors rounded px-0.5 py-1"
+              >
+                <EllipsisVertical className="size-3" />
+              </button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="start" side="bottom" className="min-w-32">
+              <DropdownMenuItem
+                onClick={(e) => {
+                  e.stopPropagation()
+                  onStartRename()
+                }}
+              >
+                Rename
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                variant="destructive"
+                onClick={(e) => {
+                  e.stopPropagation()
+                  onDelete()
+                }}
+              >
+                Delete
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </>
+      )}
+    </div>
+  )
+}
 
 export default function Sidebar() {
   const {
@@ -32,24 +137,19 @@ export default function Sidebar() {
 
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editValue, setEditValue] = useState("")
-  const editInputRef = useRef<HTMLInputElement>(null)
   const [showCheckingSpinner, setShowCheckingSpinner] = useState(false)
 
+  // Show spinner after 2s of "checking" status (setState in timeout callback, not synchronous in effect)
   useEffect(() => {
-    if (editingId) {
-      editInputRef.current?.focus()
-      editInputRef.current?.select()
-    }
-  }, [editingId])
-
-  useEffect(() => {
-    if (backendStatus !== "checking") {
-      setShowCheckingSpinner(false)
-      return
-    }
+    if (backendStatus !== "checking") return
     const timer = setTimeout(() => setShowCheckingSpinner(true), 2000)
     return () => clearTimeout(timer)
   }, [backendStatus])
+
+  // Reset spinner when no longer checking (render-time)
+  if (showCheckingSpinner && backendStatus !== "checking") {
+    setShowCheckingSpinner(false)
+  }
 
   const startRename = (id: string, currentName: string) => {
     setEditingId(id)
@@ -77,86 +177,7 @@ export default function Sidebar() {
     .filter((s) => !s.connected)
     .sort((a, b) => b.created_at - a.created_at)
 
-
-  const renderSession = (session: Session, isHistory: boolean) => {
-    const isOpenInAnyPane = layout.panes.some((p) => p.tabSessionIds.includes(session.id))
-    const focusedPane = layout.panes.find((p) => p.id === layout.focusedPaneId)
-    const isActive = focusedPane?.activeTabSessionId === session.id && !showSetup
-
-    const handleDragStart = (e: DragEvent) => {
-      e.dataTransfer.setData(DRAG_TYPES.sidebarSession, JSON.stringify({ sessionId: session.id }))
-      e.dataTransfer.effectAllowed = "copyMove"
-    }
-
-    return (
-      <div
-        key={session.id}
-        draggable={editingId !== session.id}
-        onDragStart={handleDragStart}
-        onClick={() => openSessionInFocusedPane(session.id)}
-        className={`group flex items-center gap-2.5 px-3 py-2 cursor-pointer text-[13px] transition-colors ${
-          isActive
-            ? "bg-[var(--t-elevated)] text-[var(--t-white)] border-l-2 border-l-[var(--t-accent)]"
-            : isOpenInAnyPane
-              ? "bg-[var(--t-bg)]/50 text-[var(--t-text)] hover:bg-[var(--t-bg)] hover:text-[var(--t-bright)] border-l-2 border-l-[var(--t-dim)]"
-              : isHistory
-                ? "text-[var(--t-muted)] hover:bg-[var(--t-bg)] hover:text-[var(--t-text)] border-l-2 border-l-transparent"
-                : "text-[var(--t-text)] hover:bg-[var(--t-bg)] hover:text-[var(--t-bright)] border-l-2 border-l-transparent"
-        }`}
-      >
-        {editingId === session.id ? (
-          <input
-            ref={editInputRef}
-            value={editValue}
-            onChange={(e) => setEditValue(e.target.value)}
-            onKeyDown={handleEditKeyDown}
-            onBlur={commitRename}
-            className="flex-1 bg-[var(--t-bg)] text-[var(--t-white)] text-[13px] outline-none border border-[var(--t-dim)] rounded px-1.5 py-0.5"
-            spellCheck={false}
-          />
-        ) : (
-          <>
-            <StatusDot session={session} />
-            <span className="flex-1 truncate">{session.name}</span>
-            {session.agent_type && (
-              <span className="shrink-0 text-[10px] font-mono font-medium tracking-wide text-[var(--t-muted)]">
-                {PROVIDER_INFO[session.agent_type]?.shortLabel ?? session.agent_type.toUpperCase()}
-              </span>
-            )}
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <button
-                  onClick={(e) => e.stopPropagation()}
-                  className="opacity-0 group-hover:opacity-100 data-[state=open]:opacity-100 shrink-0 cursor-pointer text-[var(--t-dim)] hover:text-[var(--t-bright)] hover:bg-[var(--t-dim)]/20 data-[state=open]:text-[var(--t-bright)] data-[state=open]:bg-[var(--t-dim)]/20 transition-colors rounded px-0.5 py-1"
-                >
-                  <EllipsisVertical className="size-3" />
-                </button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="start" side="bottom" className="min-w-32">
-                <DropdownMenuItem
-                  onClick={(e) => {
-                    e.stopPropagation()
-                    startRename(session.id, session.name)
-                  }}
-                >
-                  Rename
-                </DropdownMenuItem>
-                <DropdownMenuItem
-                  variant="destructive"
-                  onClick={(e) => {
-                    e.stopPropagation()
-                    deleteSession(session.id)
-                  }}
-                >
-                  Delete
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
-          </>
-        )}
-      </div>
-    )
-  }
+  const focusedPane = layout.panes.find((p) => p.id === layout.focusedPaneId)
 
   return (
     <div className="flex h-full w-56 min-h-0 flex-col bg-[var(--t-surface)] border-r border-[var(--t-border)]">
@@ -187,7 +208,21 @@ export default function Sidebar() {
       <div className="flex-1 min-h-0 overflow-y-auto">
         <div className="py-1">
           {activeSessions.map((session) => (
-            <Fragment key={session.id}>{renderSession(session, false)}</Fragment>
+            <SessionItem
+              key={session.id}
+              session={session}
+              isHistory={false}
+              isActive={focusedPane?.activeTabSessionId === session.id && !showSetup}
+              isOpenInAnyPane={layout.panes.some((p) => p.tabSessionIds.includes(session.id))}
+              editingId={editingId}
+              editValue={editValue}
+              onEditValueChange={setEditValue}
+              onEditKeyDown={handleEditKeyDown}
+              onEditBlur={commitRename}
+              onClick={() => openSessionInFocusedPane(session.id)}
+              onStartRename={() => startRename(session.id, session.name)}
+              onDelete={() => deleteSession(session.id)}
+            />
           ))}
 
           {historySessions.length > 0 && (
@@ -201,7 +236,21 @@ export default function Sidebar() {
                 </span>
               </div>
               {historySessions.map((session) => (
-                <Fragment key={session.id}>{renderSession(session, true)}</Fragment>
+                <SessionItem
+                  key={session.id}
+                  session={session}
+                  isHistory
+                  isActive={focusedPane?.activeTabSessionId === session.id && !showSetup}
+                  isOpenInAnyPane={layout.panes.some((p) => p.tabSessionIds.includes(session.id))}
+                  editingId={editingId}
+                  editValue={editValue}
+                  onEditValueChange={setEditValue}
+                  onEditKeyDown={handleEditKeyDown}
+                  onEditBlur={commitRename}
+                  onClick={() => openSessionInFocusedPane(session.id)}
+                  onStartRename={() => startRename(session.id, session.name)}
+                  onDelete={() => deleteSession(session.id)}
+                />
               ))}
             </>
           )}

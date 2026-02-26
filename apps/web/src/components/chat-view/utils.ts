@@ -66,7 +66,7 @@ export function extractCommand(raw: unknown): string | null {
   return null
 }
 
-export function asObject(raw: unknown): Record<string, unknown> | null {
+function asObject(raw: unknown): Record<string, unknown> | null {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null
   return raw as Record<string, unknown>
 }
@@ -143,6 +143,26 @@ export function parseToolCallBlock(block: { id: string; content: string; kind: s
     }
   } catch {
     return { toolCallId: block.id, title: block.kind || "Tool call" }
+  }
+}
+
+const SAFE_URI_RE = /^(?:https?|file):\/\//i
+
+export function parseResourceLinkBlock(block: { content: string }) {
+  try {
+    const data = JSON.parse(block.content) as Record<string, unknown>
+    const uri = typeof data.uri === "string" ? data.uri : ""
+    const name = typeof data.name === "string" ? data.name : ""
+    if (!uri || !name || !SAFE_URI_RE.test(uri)) return null
+    return {
+      uri,
+      name,
+      description: typeof data.description === "string" ? data.description : null,
+      title: typeof data.title === "string" ? data.title : null,
+      mimeType: typeof data.mimeType === "string" ? data.mimeType : null,
+    }
+  } catch {
+    return null
   }
 }
 

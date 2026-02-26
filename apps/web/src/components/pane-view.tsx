@@ -34,8 +34,10 @@ export function PaneView({ paneId }: PaneViewProps) {
 
   return (
     <div
+      role="group"
       className="flex flex-col h-full min-w-0 min-h-0 bg-[var(--t-bg)]"
       onClick={() => focusPane(paneId)}
+      onKeyDown={(e) => { if (e.target === e.currentTarget && (e.key === "Enter" || e.key === " ")) focusPane(paneId) }}
       onDragOver={handlePaneDragOver}
       onDrop={handlePaneDrop}
     >
@@ -52,19 +54,25 @@ export function PaneView({ paneId }: PaneViewProps) {
         prompting={ps.prompting}
         connecting={ps.connecting}
         configOptions={ps.configOptions}
+        pendingAuthMethods={ps.pendingAuthMethods}
+        modes={ps.modes}
         onConnect={ps.connectAgent}
+        onAuthenticateAndConnect={ps.authenticateAndConnect}
         onDisconnect={ps.disconnectAgent}
         onSetConfigOption={ps.setConfigOption}
+        onSetMode={ps.setMode}
       />
 
       <div className="flex-1 min-h-0 relative">
         {ps.activeSession ? (
           <ChatView
+            key={ps.activeSession.id}
             sessionId={ps.activeSession.id}
             lastSentPrompt={ps.lastSentPrompt}
             promptError={ps.promptError}
             onConfigOptionsChange={ps.onConfigOptionsChange}
             onAvailableCommandsChange={ps.onAvailableCommandsChange}
+            onModesChange={ps.onModesChange}
           />
         ) : (
           <div className="flex h-full items-center justify-center text-[var(--t-muted)] text-sm">
@@ -74,6 +82,7 @@ export function PaneView({ paneId }: PaneViewProps) {
       </div>
 
       <ChatFooter
+        key={ps.activeSession?.id ?? "empty"}
         sessionId={ps.activeSession?.id ?? null}
         active={!!ps.activeSession}
         prompting={ps.prompting}

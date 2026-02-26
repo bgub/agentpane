@@ -16,6 +16,25 @@ import {
 
 const debugStream = process.env.AGENTPANE_DEBUG_STREAM === "1"
 
+const asPositiveInt = (value: unknown): number | null => {
+  if (typeof value !== "number" || !Number.isFinite(value)) return null
+  const n = Math.trunc(value)
+  return n > 0 ? n : null
+}
+
+const sliceByLineWindow = (content: string, line: unknown, limit: unknown): string => {
+  const startLine = asPositiveInt(line)
+  const lineLimit = asPositiveInt(limit)
+  if (!startLine && !lineLimit) return content
+
+  const lines = content.split(/\r?\n/)
+  const startIndex = Math.max(0, (startLine ?? 1) - 1)
+  if (startIndex >= lines.length) return ""
+
+  const endIndex = lineLimit ? startIndex + lineLimit : lines.length
+  return lines.slice(startIndex, endIndex).join("\n")
+}
+
 export interface ClientDeps {
   readonly enqueueMessageBlock: (
     sessionId: string,
@@ -83,6 +102,17 @@ export const makeClient = (
         conn.availableCommands = (update.availableCommands as Array<Record<string, unknown>>) ?? []
       }
 
+      // Keep stored modes in sync when agent pushes updates
+      if (eventType === "current_mode_update" && conn) {
+        if (update.modes && typeof update.modes === "object") {
+          conn.modes = update.modes as Record<string, unknown>
+        } else if (typeof update.currentModeId === "string") {
+          conn.modes = { ...(conn.modes ?? {}), currentModeId: update.currentModeId }
+        } else if (typeof update.modeId === "string") {
+          conn.modes = { ...(conn.modes ?? {}), currentModeId: update.modeId }
+        }
+      }
+
       // Persist session title when agent pushes session_info_update
       if (eventType === "session_info_update" && typeof update.title === "string") {
         deps.updateSessionName(sessionId, update.title).catch(() => {})
@@ -116,7 +146,8 @@ export const makeClient = (
     },
 
     readTextFile: async (params) => {
-      const content = await fs.readFile(params.path, "utf-8")
+      const fullContent = await fs.readFile(params.path, "utf-8")
+      const content = sliceByLineWindow(fullContent, params.line, params.limit)
       return { content }
     },
 

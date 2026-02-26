@@ -39,13 +39,10 @@ export function ChatFooter({ sessionId, active, prompting, connecting, connected
 
   const showAutocomplete = filteredCommands.length > 0 && !prompting && !connecting
 
-  // Clear input when session changes
+  // Reset textarea height on mount (key-based remount handles session changes)
   useEffect(() => {
-    void sessionId
-    setInput("")
-    setSelectedIndex(0)
     if (textareaRef.current) textareaRef.current.style.height = "auto"
-  }, [sessionId])
+  }, [])
 
   // Focus textarea when ready (only in focused pane)
   useEffect(() => {
