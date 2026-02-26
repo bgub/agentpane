@@ -1,11 +1,31 @@
 import { spawn } from "node:child_process"
+import type { Readable, Writable } from "node:stream"
 import { Context, Effect, Layer, Runtime } from "effect"
 import {
   ClientSideConnection,
   ndJsonStream,
   PROTOCOL_VERSION,
 } from "@agentclientprotocol/sdk"
-import { nodeToWebWritable, nodeToWebReadable } from "@zed-industries/claude-agent-acp"
+
+function nodeToWebWritable(nodeStream: Writable): WritableStream<Uint8Array> {
+  return new WritableStream({
+    write(chunk) {
+      return new Promise((resolve, reject) => {
+        nodeStream.write(Buffer.from(chunk), (err) => (err ? reject(err) : resolve()))
+      })
+    },
+  })
+}
+
+function nodeToWebReadable(nodeStream: Readable): ReadableStream<Uint8Array> {
+  return new ReadableStream({
+    start(controller) {
+      nodeStream.on("data", (chunk: Buffer) => controller.enqueue(new Uint8Array(chunk)))
+      nodeStream.on("end", () => controller.close())
+      nodeStream.on("error", (err: Error) => controller.error(err))
+    },
+  })
+}
 import { AcpConnectionError, AuthRequiredError } from "./schema.js"
 import { resolveProviderBin, PROVIDERS } from "./providers.js"
 import {
