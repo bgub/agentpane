@@ -42,13 +42,13 @@
     "@hono/node-server": "^1.19.9",
     "@zed-industries/claude-code-acp": "^0.16.2",
     "@zed-industries/codex-acp": "^0.9.4",
-    "better-sqlite3": "^11.10.0",
+    "better-sqlite3": "^12.6.2",
     "effect": "^3.19.19",
     "hono": "^4.12.3"
   },
   "devDependencies": {
     "@agentpane/web": "workspace:*",
     "tsx": "^4.21.0",
-    "vitest": "^3.2.4"
+    "vitest": "^4.0.18"
   }
 }

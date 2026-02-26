@@ -3,7 +3,7 @@
   "private": true,
   "packageManager": "pnpm@10.17.1",
   "scripts": {
-    "dev": "turbo run dev",
+    "dev": "turbo run dev --ui tui",
     "build": "turbo run build",
     "typecheck": "turbo run typecheck",
     "prepare": "effect-language-service patch"
