@@ -10,7 +10,7 @@ export const PROVIDERS: Record<string, Provider> = {
   "claude-code": {
     id: "claude-code",
     name: "Claude Code",
-    bin: "node_modules/.bin/claude-code-acp",
+    bin: "node_modules/.bin/claude-agent-acp",
   },
   codex: {
     id: "codex",

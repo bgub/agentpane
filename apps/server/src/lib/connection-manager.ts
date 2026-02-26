@@ -5,7 +5,7 @@ import {
   ndJsonStream,
   PROTOCOL_VERSION,
 } from "@agentclientprotocol/sdk"
-import { nodeToWebWritable, nodeToWebReadable } from "@zed-industries/claude-code-acp"
+import { nodeToWebWritable, nodeToWebReadable } from "@zed-industries/claude-agent-acp"
 import { AcpConnectionError, AuthRequiredError } from "./schema.js"
 import { resolveProviderBin, PROVIDERS } from "./providers.js"
 import {
