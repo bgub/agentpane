@@ -1,10 +1,17 @@
-import { Check, X, Loader2, Terminal, FileText, Search, Brain, Pencil, type LucideIcon } from "lucide-react"
+import { Check, X, Loader2, Terminal, FileText, Search, Brain, Pencil, Globe, type LucideIcon } from "lucide-react"
 import { createElement } from "react"
 import { diffLines } from "diff"
-import type { DiffLine, FileChange } from "./types"
+import type { DiffLine, FileChange, PlanEntry, ToolCallState } from "./types"
+
+export function safeParse<T = unknown>(json: string): T | null {
+  try { return JSON.parse(json) as T } catch { return null }
+}
 
 const KIND_ICONS: Record<string, LucideIcon> = {
+  // Claude Code kinds
   execute: Terminal, read: FileText, edit: Pencil, search: Search, think: Brain,
+  // ACP spec ToolKind values
+  command_execution: Terminal, file_operation: FileText, web_request: Globe, code_execution: Terminal,
 }
 
 export function kindIcon(kind?: string) {
@@ -96,7 +103,7 @@ export function computeLineDiff(oldText: string, newText: string): DiffLine[] {
 }
 
 export function parseEditChanges(raw: unknown): FileChange[] | null {
-  const input = typeof raw === "string" ? (() => { try { return JSON.parse(raw) } catch { return null } })() : raw
+  const input = typeof raw === "string" ? safeParse(raw) : raw
   if (!input || typeof input !== "object") return null
   const obj = input as Record<string, unknown>
 
@@ -130,39 +137,42 @@ export function parseEditChanges(raw: unknown): FileChange[] | null {
   return null
 }
 
-export function parseToolCallBlock(block: { id: string; content: string; kind: string }) {
-  try {
-    const data = JSON.parse(block.content)
-    return {
-      toolCallId: data.toolCallId || block.id,
-      title: data.title || data.toolName || "Tool call",
-      kind: data.kind,
-      status: data.status,
-      rawInput: data.rawInput,
-      rawOutput: data.rawOutput,
+export function parsePlanBlock(content: string): PlanEntry[] {
+  const data = safeParse<Record<string, unknown>>(content)
+  if (data && Array.isArray(data.entries)) return data.entries as PlanEntry[]
+  return []
+}
+
+export function parseToolCallBlock(block: { id: string; content: string; kind: string }): ToolCallState {
+  const data = safeParse<Record<string, unknown>>(block.content)
+  if (data) {
+    const result: ToolCallState = {
+      toolCallId: (data.toolCallId as string) || block.id,
+      title: (data.title as string) || (data.toolName as string) || "Tool call",
     }
-  } catch {
-    return { toolCallId: block.id, title: block.kind || "Tool call" }
+    if (typeof data.kind === "string") result.kind = data.kind
+    if (typeof data.status === "string") result.status = data.status
+    if (data.rawInput !== undefined) result.rawInput = data.rawInput
+    if (data.rawOutput !== undefined) result.rawOutput = data.rawOutput
+    return result
   }
+  return { toolCallId: block.id, title: block.kind || "Tool call" }
 }
 
 const SAFE_URI_RE = /^(?:https?|file):\/\//i
 
 export function parseResourceLinkBlock(block: { content: string }) {
-  try {
-    const data = JSON.parse(block.content) as Record<string, unknown>
-    const uri = typeof data.uri === "string" ? data.uri : ""
-    const name = typeof data.name === "string" ? data.name : ""
-    if (!uri || !name || !SAFE_URI_RE.test(uri)) return null
-    return {
-      uri,
-      name,
-      description: typeof data.description === "string" ? data.description : null,
-      title: typeof data.title === "string" ? data.title : null,
-      mimeType: typeof data.mimeType === "string" ? data.mimeType : null,
-    }
-  } catch {
-    return null
+  const data = safeParse<Record<string, unknown>>(block.content)
+  if (!data) return null
+  const uri = typeof data.uri === "string" ? data.uri : ""
+  const name = typeof data.name === "string" ? data.name : ""
+  if (!uri || !name || !SAFE_URI_RE.test(uri)) return null
+  return {
+    uri,
+    name,
+    description: typeof data.description === "string" ? data.description : null,
+    title: typeof data.title === "string" ? data.title : null,
+    mimeType: typeof data.mimeType === "string" ? data.mimeType : null,
   }
 }
 
@@ -173,22 +183,21 @@ export function mergeToolCallUpdates(blocks: { id: string; kind: string; content
 
   for (const b of blocks) {
     if (b.kind !== "tool_call" && b.kind !== "tool_call_update") continue
-    try {
-      const data = JSON.parse(b.content)
-      parsed.set(b, data)
-      const id = data.toolCallId
-      if (!id) continue
-      const existing = merged.get(id)
-      if (!existing) {
-        merged.set(id, data)
-      } else {
-        if (data.title != null) existing.title = data.title
-        if (data.kind != null) existing.kind = data.kind
-        if (data.status != null) existing.status = data.status
-        if (data.rawInput !== undefined) existing.rawInput = data.rawInput
-        if (data.rawOutput !== undefined) existing.rawOutput = data.rawOutput
-      }
-    } catch { /* ignore */ }
+    const data = safeParse<Record<string, unknown>>(b.content)
+    if (!data) continue
+    parsed.set(b, data)
+    const id = data.toolCallId as string | undefined
+    if (!id) continue
+    const existing = merged.get(id)
+    if (!existing) {
+      merged.set(id, data)
+    } else {
+      if (data.title != null) existing.title = data.title
+      if (data.kind != null) existing.kind = data.kind
+      if (data.status != null) existing.status = data.status
+      if (data.rawInput !== undefined) existing.rawInput = data.rawInput
+      if (data.rawOutput !== undefined) existing.rawOutput = data.rawOutput
+    }
   }
 
   const seenIds = new Set<string>()

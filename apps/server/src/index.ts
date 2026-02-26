@@ -11,7 +11,7 @@ import { sessionsRoutes } from "./routes/sessions.js"
 const app = new Hono()
 
 app.use("*", bodyLimit({
-  maxSize: 1024 * 1024, // 1 MB
+  maxSize: 10 * 1024 * 1024, // 10 MB (supports image uploads)
   onError: (c) => c.json({ error: "Request body too large" }, 413),
 }))
 

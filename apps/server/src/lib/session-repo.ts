@@ -32,6 +32,10 @@ export class SessionRepo extends Context.Tag("@agentpane/SessionRepo")<
       id: string,
       agentSessionId: string | null
     ) => Effect.Effect<void, SqlError>
+    readonly updateMcpServers: (
+      id: string,
+      mcpServersJson: string | null
+    ) => Effect.Effect<void, SqlError>
     readonly addTurn: (
       sessionId: string,
       role: "user" | "assistant"
@@ -67,11 +71,11 @@ export class SessionRepo extends Context.Tag("@agentpane/SessionRepo")<
       const sql = yield* SqlClient
 
       const list = Effect.fn("SessionRepo.list")(function* () {
-        return yield* sql<Session>`SELECT id, name, cwd, agent_type, agent_session_id, created_at FROM sessions ORDER BY created_at`
+        return yield* sql<Session>`SELECT * FROM sessions ORDER BY created_at`
       })
 
       const get = Effect.fn("SessionRepo.get")(function* (id: string) {
-        const rows = yield* sql<Session>`SELECT id, name, cwd, agent_type, agent_session_id, created_at FROM sessions WHERE id = ${id}`
+        const rows = yield* sql<Session>`SELECT * FROM sessions WHERE id = ${id}`
         if (rows.length === 0) {
           return yield* new SessionNotFoundError({ id })
         }
@@ -86,9 +90,9 @@ export class SessionRepo extends Context.Tag("@agentpane/SessionRepo")<
         const home = process.env.HOME || "~"
         const provider = agentType || ""
         const rows = yield* sql<Session>`
-          INSERT INTO sessions (id, name, cwd, agent_type, agent_session_id, created_at)
-          VALUES (${id}, ${sessionName}, ${home}, ${provider}, ${null}, ${now})
-          RETURNING id, name, cwd, agent_type, agent_session_id, created_at
+          INSERT INTO sessions (id, name, cwd, agent_type, agent_session_id, mcp_servers, created_at)
+          VALUES (${id}, ${sessionName}, ${home}, ${provider}, ${null}, ${null}, ${now})
+          RETURNING *
         `
         return rows[0]
       })
@@ -100,7 +104,7 @@ export class SessionRepo extends Context.Tag("@agentpane/SessionRepo")<
       const rename = Effect.fn("SessionRepo.rename")(function* (id: string, name: string) {
         const rows = yield* sql<Session>`
           UPDATE sessions SET name = ${name} WHERE id = ${id}
-          RETURNING id, name, cwd, agent_type, agent_session_id, created_at
+          RETURNING *
         `
         if (rows.length === 0) {
           return yield* new SessionNotFoundError({ id })
@@ -116,7 +120,7 @@ export class SessionRepo extends Context.Tag("@agentpane/SessionRepo")<
         function* (id: string, agentType: string, cwd: string) {
           const rows = yield* sql<Session>`
             UPDATE sessions SET agent_type = ${agentType}, cwd = ${cwd} WHERE id = ${id}
-            RETURNING id, name, cwd, agent_type, agent_session_id, created_at
+            RETURNING *
           `
           if (rows.length === 0) {
             return yield* new SessionNotFoundError({ id })
@@ -128,6 +132,12 @@ export class SessionRepo extends Context.Tag("@agentpane/SessionRepo")<
       const updateAgentSessionId = Effect.fn("SessionRepo.updateAgentSessionId")(
         function* (id: string, agentSessionId: string | null) {
           yield* sql`UPDATE sessions SET agent_session_id = ${agentSessionId} WHERE id = ${id}`
+        }
+      )
+
+      const updateMcpServers = Effect.fn("SessionRepo.updateMcpServers")(
+        function* (id: string, mcpServersJson: string | null) {
+          yield* sql`UPDATE sessions SET mcp_servers = ${mcpServersJson} WHERE id = ${id}`
         }
       )
 
@@ -351,6 +361,7 @@ export class SessionRepo extends Context.Tag("@agentpane/SessionRepo")<
         updateCwd,
         updateConfig,
         updateAgentSessionId,
+        updateMcpServers,
         addTurn,
         completeTurn,
         addMessageBlock,

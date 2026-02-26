@@ -16,6 +16,7 @@ const testSqliteLayer = Layer.effectDiscard(
         cwd TEXT NOT NULL,
         agent_type TEXT NOT NULL,
         agent_session_id TEXT,
+        mcp_servers TEXT,
         created_at INTEGER NOT NULL
       )
     `

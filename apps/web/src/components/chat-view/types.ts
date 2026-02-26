@@ -1,4 +1,4 @@
-import type { SessionModesState } from "@/lib/types"
+import type { SessionModesState, PromptCapabilities, McpCapabilities } from "@/lib/types"
 
 export interface TurnData {
   id: string
@@ -32,6 +32,12 @@ export interface AvailableCommand {
   input?: { hint: string } | null
 }
 
+export interface UsageState {
+  used: number
+  size: number
+  cost?: { amount: number; currency: string } | null
+}
+
 export interface ChatViewProps {
   sessionId: string
   lastSentPrompt: { text: string; ts: number } | null
@@ -39,6 +45,9 @@ export interface ChatViewProps {
   onConfigOptionsChange?: (configOptions: ConfigOption[]) => void
   onAvailableCommandsChange?: (commands: AvailableCommand[]) => void
   onModesChange?: (modes: SessionModesState | null) => void
+  onPromptCapabilitiesChange?: (caps: PromptCapabilities) => void
+  onMcpCapabilitiesChange?: (caps: McpCapabilities) => void
+  onUsageUpdate?: (usage: UsageState | null) => void
 }
 
 export interface PermissionOption {
@@ -65,6 +74,8 @@ export interface PlanEntry {
 
 export type StreamingBlock =
   | { type: "text"; id: string; content: string }
+  | { type: "thought"; id: string; content: string }
+  | { type: "image"; id: string; data: string; mimeType: string }
   | { type: "tool_call"; state: ToolCallState }
   | { type: "plan"; entries: PlanEntry[] }
 

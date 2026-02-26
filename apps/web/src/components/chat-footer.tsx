@@ -1,7 +1,14 @@
-import { useState, useRef, useEffect, type KeyboardEvent } from "react"
-import { Square } from "lucide-react"
+import { useState, useRef, useEffect, type KeyboardEvent, type DragEvent, type ClipboardEvent } from "react"
+import { Square, Paperclip, X } from "lucide-react"
 import { useSessionTokenUsageQuery } from "@/lib/queries"
-import type { AvailableCommand } from "./chat-view/types"
+import type { AvailableCommand, UsageState } from "./chat-view/types"
+import type { PromptInputBlock } from "@/lib/api"
+
+interface AttachedImage {
+  data: string
+  mimeType: string
+  preview: string
+}
 
 interface ChatFooterProps {
   sessionId: string | null
@@ -10,21 +17,34 @@ interface ChatFooterProps {
   connecting: boolean
   connected: boolean
   availableCommands: AvailableCommand[]
-  onSend: (text: string) => void
+  usageUpdate: UsageState | null
+  supportsImages?: boolean
+  onSend: (text: string, blocks?: PromptInputBlock[]) => void
   onCancel: () => void
   autoFocus?: boolean
 }
 
-export function ChatFooter({ sessionId, active, prompting, connecting, connected, availableCommands, onSend, onCancel, autoFocus = true }: ChatFooterProps) {
+function formatUsage(usage: UsageState): string {
+  const fmt = (n: number) => n >= 1000 ? `${(n / 1000).toFixed(0)}k` : String(n)
+  let s = `${fmt(usage.used)}/${fmt(usage.size)}`
+  if (usage.cost) s += ` $${usage.cost.amount.toFixed(2)}`
+  return s
+}
+
+export function ChatFooter({ sessionId, active, prompting, connecting, connected, availableCommands, usageUpdate, supportsImages, onSend, onCancel, autoFocus = true }: ChatFooterProps) {
   const [input, setInput] = useState("")
   const [selectedIndex, setSelectedIndex] = useState(0)
+  const [attachedImages, setAttachedImages] = useState<AttachedImage[]>([])
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const menuRef = useRef<HTMLDivElement>(null)
+  const fileInputRef = useRef<HTMLInputElement>(null)
   const { data: tokenUsage } = useSessionTokenUsageQuery(sessionId ?? undefined)
 
-  const tokenHint = tokenUsage && tokenUsage.tokenized_turns > 0
-    ? `${tokenUsage.total_tokens.toLocaleString()} tok`
-    : null
+  const tokenHint = usageUpdate
+    ? formatUsage(usageUpdate)
+    : tokenUsage && tokenUsage.tokenized_turns > 0
+      ? `${tokenUsage.total_tokens.toLocaleString()} tok`
+      : null
 
   // Compute filtered commands based on current input
   const filteredCommands = (() => {
@@ -36,6 +56,51 @@ export function ChatFooter({ sessionId, active, prompting, connecting, connected
       cmd.name.toLowerCase().startsWith(prefix)
     )
   })()
+
+  const processFiles = (files: FileList | File[]) => {
+    for (const file of files) {
+      if (!file.type.startsWith("image/")) continue
+      const reader = new FileReader()
+      reader.onload = () => {
+        const dataUrl = reader.result as string
+        const base64 = dataUrl.split(",")[1]
+        setAttachedImages((prev) => [...prev, { data: base64, mimeType: file.type, preview: dataUrl }])
+      }
+      reader.readAsDataURL(file)
+    }
+  }
+
+  const handleDrop = (e: DragEvent<HTMLDivElement>) => {
+    e.preventDefault()
+    if (!supportsImages || !e.dataTransfer.files.length) return
+    processFiles(e.dataTransfer.files)
+  }
+
+  const handleDragOver = (e: DragEvent<HTMLDivElement>) => {
+    if (!supportsImages) return
+    e.preventDefault()
+    e.dataTransfer.dropEffect = "copy"
+  }
+
+  const handlePaste = (e: ClipboardEvent<HTMLTextAreaElement>) => {
+    if (!supportsImages) return
+    const items = e.clipboardData.items
+    const imageFiles: File[] = []
+    for (const item of items) {
+      if (item.type.startsWith("image/")) {
+        const file = item.getAsFile()
+        if (file) imageFiles.push(file)
+      }
+    }
+    if (imageFiles.length > 0) {
+      e.preventDefault()
+      processFiles(imageFiles)
+    }
+  }
+
+  const removeImage = (index: number) => {
+    setAttachedImages((prev) => prev.filter((_, i) => i !== index))
+  }
 
   const showAutocomplete = filteredCommands.length > 0 && !prompting && !connecting
 
@@ -99,11 +164,17 @@ export function ChatFooter({ sessionId, active, prompting, connecting, connected
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault()
       const trimmed = input.trim()
-      if (trimmed && !prompting) {
+      if ((trimmed || attachedImages.length > 0) && !prompting) {
+        const blocks: PromptInputBlock[] = []
+        if (trimmed) blocks.push({ type: "text", text: trimmed })
+        for (const img of attachedImages) {
+          blocks.push({ type: "image", data: img.data, mimeType: img.mimeType })
+        }
         setInput("")
         setSelectedIndex(0)
+        setAttachedImages([])
         if (textareaRef.current) textareaRef.current.style.height = "auto"
-        onSend(trimmed)
+        onSend(trimmed, blocks.length > 1 || attachedImages.length > 0 ? blocks : undefined)
       }
     }
     if (e.key === "Escape" && prompting) {
@@ -121,7 +192,29 @@ export function ChatFooter({ sessionId, active, prompting, connecting, connected
   }
 
   return (
-    <div className="shrink-0 h-12 border-t border-[var(--t-border)] bg-[var(--t-surface)] px-5 flex items-center relative">
+    <div
+      className="shrink-0 border-t border-[var(--t-border)] bg-[var(--t-surface)] px-5 relative"
+      onDrop={handleDrop}
+      onDragOver={handleDragOver}
+    >
+      {/* Image preview strip */}
+      {attachedImages.length > 0 && (
+        <div className="max-w-3xl mx-auto flex gap-2 pt-2 pb-1">
+          {attachedImages.map((img, i) => (
+            <div key={i} className="relative group">
+              <img src={img.preview} alt="" className="h-12 rounded border border-[var(--t-border)] object-cover" />
+              <button
+                type="button"
+                onClick={() => removeImage(i)}
+                className="absolute -top-1.5 -right-1.5 rounded-full bg-[var(--t-surface)] border border-[var(--t-border)] p-0.5 opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer"
+              >
+                <X className="size-2.5 text-[var(--t-muted)]" />
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+    <div className="h-12 flex items-center relative">
       {/* Autocomplete dropdown */}
       {showAutocomplete && (
         <div
@@ -163,6 +256,7 @@ export function ChatFooter({ sessionId, active, prompting, connecting, connected
           value={input}
           onChange={(e) => handleInputChange(e.target.value)}
           onKeyDown={handleKeyDown}
+          onPaste={handlePaste}
           disabled={!active || prompting || connecting}
           rows={1}
           className="flex-1 resize-none bg-transparent text-sm text-[var(--t-bright)] outline-none placeholder:text-[var(--t-dim)] disabled:opacity-40"
@@ -180,6 +274,26 @@ export function ChatFooter({ sessionId, active, prompting, connecting, connected
           }
           spellCheck={false}
         />
+        {supportsImages && active && !prompting && !connecting && (
+          <>
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="image/*"
+              multiple
+              className="hidden"
+              onChange={(e) => { if (e.target.files) processFiles(e.target.files); e.target.value = "" }}
+            />
+            <button
+              type="button"
+              onClick={() => fileInputRef.current?.click()}
+              className="shrink-0 text-[var(--t-dim)] hover:text-[var(--t-muted)] transition-colors cursor-pointer"
+              title="Attach image"
+            >
+              <Paperclip className="size-3.5" />
+            </button>
+          </>
+        )}
         {active && prompting ? (
           <button
             type="button"
@@ -195,6 +309,7 @@ export function ChatFooter({ sessionId, active, prompting, connecting, connected
           </span>
         ) : null}
       </div>
+    </div>
     </div>
   )
 }

@@ -15,6 +15,7 @@ import {
   badRequest,
   parseLastEventId,
   readJsonObject,
+  safeParse,
 } from "./validation.js"
 
 type AppContext = SessionRepo | AcpClient
@@ -99,6 +100,14 @@ const parsePromptBlocks = (body: JsonObject): ParseResult => {
       continue
     }
 
+    if (type === "image") {
+      const data = asNonEmptyString(block.data)
+      const mimeType = asNonEmptyString(block.mimeType)
+      if (!data || !mimeType) return { ok: false, error: "image block requires data and mimeType" }
+      parsed.push({ type: "image", data, mimeType })
+      continue
+    }
+
     return { ok: false, error: `Unsupported block type: ${String(type ?? "unknown")}` }
   }
 
@@ -131,6 +140,7 @@ app.post("/", async (c) => {
   const name = asOptionalString(body.name)
   const agentType = asOptionalString(body.agent_type)
   const cwdInput = asOptionalString(body.cwd)
+  const mcpServers = Array.isArray(body.mcpServers) ? body.mcpServers as Array<Record<string, unknown>> : undefined
 
   return runEffect(c, Effect.gen(function* () {
     const repo = yield* SessionRepo
@@ -142,11 +152,15 @@ app.post("/", async (c) => {
       yield* repo.updateCwd(session.id, cwdInput)
     }
 
+    if (mcpServers && mcpServers.length > 0) {
+      yield* repo.updateMcpServers(session.id, JSON.stringify(mcpServers))
+    }
+
     acp.ensureBroadcaster(session.id)
 
     let connected = false
     if (agentType) {
-      yield* acp.connect(session.id, cwd, session.agent_type).pipe(
+      yield* acp.connect(session.id, cwd, session.agent_type, undefined, undefined, mcpServers).pipe(
         Effect.tapError(() =>
           Effect.gen(function* () {
             acp.removeBroadcaster(session.id)
@@ -265,7 +279,14 @@ app.post("/:id/cancel", async (c) => {
 })
 
 // GET /sessions/:id/events — SSE event stream
+// CORS: in dev the Next.js frontend (port 6767) connects directly here
+// because Next.js rewrites buffer SSE responses.
 app.get("/:id/events", (c) => {
+  const origin = c.req.header("Origin")
+  if (origin) {
+    c.header("Access-Control-Allow-Origin", origin)
+  }
+
   const id = c.req.param("id")
 
   // SSE standard: EventSource sends Last-Event-ID on auto-reconnect
@@ -314,6 +335,7 @@ app.post("/:id/connect", async (c) => {
   const bodyAgentType = asOptionalString(body.agent_type)
   const bodyCwd = asOptionalString(body.cwd)
   const authMethodId = asOptionalString(body.authMethodId)
+  const mcpServers = Array.isArray(body.mcpServers) ? body.mcpServers as Array<Record<string, unknown>> : undefined
   const id = c.req.param("id")
   return runEffect(c, Effect.gen(function* () {
     const repo = yield* SessionRepo
@@ -321,8 +343,21 @@ app.post("/:id/connect", async (c) => {
     const session = bodyAgentType && bodyCwd
       ? yield* repo.updateConfig(id, bodyAgentType, bodyCwd)
       : yield* repo.get(id)
+
+    // Resolve MCP servers: body > session > global defaults
+    let resolvedMcpServers = mcpServers
+    if (!resolvedMcpServers && session.mcp_servers) {
+      resolvedMcpServers = safeParse<Array<Record<string, unknown>>>(session.mcp_servers) ?? undefined
+    }
+    if (!resolvedMcpServers) {
+      const globalJson = yield* repo.getSetting("mcp_servers")
+      if (globalJson) {
+        resolvedMcpServers = safeParse<Array<Record<string, unknown>>>(globalJson) ?? undefined
+      }
+    }
+
     acp.ensureBroadcaster(id)
-    return yield* acp.connect(id, session.cwd, session.agent_type, session.agent_session_id, authMethodId)
+    return yield* acp.connect(id, session.cwd, session.agent_type, session.agent_session_id, authMethodId, resolvedMcpServers)
   }))
 })
 

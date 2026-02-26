@@ -1,6 +1,7 @@
 export type PromptInputBlock =
   | { type: "text"; text: string }
   | { type: "resource_link"; uri: string; name: string; description?: string | null; mimeType?: string | null; title?: string | null }
+  | { type: "image"; data: string; mimeType: string }
 
 export const api = {
   health: (): Promise<Response> =>
@@ -10,7 +11,7 @@ export const api = {
     list: (): Promise<Response> =>
       fetch("/api/sessions"),
 
-    create: (body?: { name?: string; agent_type?: string; cwd?: string }): Promise<Response> =>
+    create: (body?: { name?: string; agent_type?: string; cwd?: string; mcpServers?: unknown[] }): Promise<Response> =>
       fetch("/api/sessions", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -102,8 +103,9 @@ export const api = {
       }),
   },
 
+  // EventSource connects directly to the API server — Next.js rewrites buffer SSE responses.
   eventsUrl: (id: string): string =>
-    `/api/sessions/${id}/events`,
+    `http://localhost:3456/api/sessions/${id}/events`,
 
   gitBranch: (cwd: string): Promise<Response> =>
     fetch(`/api/git-branch?cwd=${encodeURIComponent(cwd)}`),

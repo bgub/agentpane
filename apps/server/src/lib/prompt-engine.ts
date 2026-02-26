@@ -21,7 +21,13 @@ export interface PromptResourceLinkBlock {
   readonly title?: string | null
 }
 
-export type PromptInputBlock = PromptTextBlock | PromptResourceLinkBlock
+export interface PromptImageBlock {
+  readonly type: "image"
+  readonly data: string
+  readonly mimeType: string
+}
+
+export type PromptInputBlock = PromptTextBlock | PromptResourceLinkBlock | PromptImageBlock
 
 export class PromptEngine extends Context.Tag("@agentpane/PromptEngine")<
   PromptEngine,
@@ -73,6 +79,15 @@ export class PromptEngine extends Context.Tag("@agentpane/PromptEngine")<
                 turnId: userTurnId,
                 kind: "text",
                 content: block.text,
+              }
+            }
+            if (block.type === "image") {
+              return {
+                _tag: "AddMessageBlock",
+                sessionId,
+                turnId: userTurnId,
+                kind: "image",
+                content: JSON.stringify({ data: block.data, mimeType: block.mimeType }),
               }
             }
             return {
@@ -140,6 +155,16 @@ export class PromptEngine extends Context.Tag("@agentpane/PromptEngine")<
             Effect.gen(function* () {
               const ops: Array<WriteOp> = []
 
+              if (conn.accumulatedThought) {
+                ops.push({
+                  _tag: "AddMessageBlock",
+                  sessionId,
+                  turnId: assistantTurnId,
+                  kind: "thought",
+                  content: conn.accumulatedThought,
+                })
+              }
+
               if (conn.accumulatedText) {
                 ops.push({
                   _tag: "AddMessageBlock",
@@ -147,6 +172,16 @@ export class PromptEngine extends Context.Tag("@agentpane/PromptEngine")<
                   turnId: assistantTurnId,
                   kind: "text",
                   content: conn.accumulatedText,
+                })
+              }
+
+              if (conn.lastPlanContent) {
+                ops.push({
+                  _tag: "AddMessageBlock",
+                  sessionId,
+                  turnId: assistantTurnId,
+                  kind: "plan",
+                  content: conn.lastPlanContent,
                 })
               }
 
@@ -205,6 +240,8 @@ export class PromptEngine extends Context.Tag("@agentpane/PromptEngine")<
               conn.prompting = false
               conn.currentAssistantTurnId = null
               conn.accumulatedText = ""
+              conn.accumulatedThought = ""
+              conn.lastPlanContent = null
               runPromise(connections.setPromptState(sessionId, false, null, conn.agentSessionId)).catch(() => {})
             })
 

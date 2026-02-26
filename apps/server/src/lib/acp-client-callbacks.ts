@@ -79,11 +79,31 @@ export const makeClient = (
         conn.accumulatedText += (update.content as Record<string, unknown>).text as string
       }
 
-      // Persist tool calls immediately
+      // Accumulate thought text for DB persistence
+      if (
+        eventType === "agent_thought_chunk" &&
+        (update.content as Record<string, unknown>)?.type === "text"
+      ) {
+        conn.accumulatedThought += (update.content as Record<string, unknown>).text as string
+      }
+
+      // Persist tool calls immediately — flush accumulated thought/text first
+      // so interleaving is preserved. The frontend hoists thought blocks to
+      // the top of the turn, so multiple thought segments render naturally.
       if (
         conn.currentAssistantTurnId &&
         (eventType === "tool_call" || eventType === "tool_call_update")
       ) {
+        if (eventType === "tool_call") {
+          if (conn.accumulatedThought) {
+            deps.enqueueMessageBlock(sessionId, conn.currentAssistantTurnId, "thought", conn.accumulatedThought)
+            conn.accumulatedThought = ""
+          }
+          if (conn.accumulatedText) {
+            deps.enqueueMessageBlock(sessionId, conn.currentAssistantTurnId, "text", conn.accumulatedText)
+            conn.accumulatedText = ""
+          }
+        }
         deps.enqueueMessageBlock(
           sessionId,
           conn.currentAssistantTurnId,
@@ -111,6 +131,11 @@ export const makeClient = (
         } else if (typeof update.modeId === "string") {
           conn.modes = { ...(conn.modes ?? {}), currentModeId: update.modeId }
         }
+      }
+
+      // Store latest plan content for DB persistence on completion
+      if (eventType === "plan") {
+        conn.lastPlanContent = JSON.stringify(update)
       }
 
       // Persist session title when agent pushes session_info_update

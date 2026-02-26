@@ -67,7 +67,7 @@ export class EventBroadcaster {
   broadcast(eventData: unknown): void {
     const id = ++this.eventCounter
     const payload = `id: ${id}\ndata: ${JSON.stringify(eventData)}\n\n`
-    const bytes = Buffer.byteLength(payload, "utf-8")
+    const bytes = payload.length
 
     // Store in replay buffer (bounded by bytes and event count)
     this.buffered.push({ id, payload, bytes })

@@ -73,6 +73,9 @@ export function PaneView({ paneId }: PaneViewProps) {
             onConfigOptionsChange={ps.onConfigOptionsChange}
             onAvailableCommandsChange={ps.onAvailableCommandsChange}
             onModesChange={ps.onModesChange}
+            onPromptCapabilitiesChange={ps.onPromptCapabilitiesChange}
+            onMcpCapabilitiesChange={ps.onMcpCapabilitiesChange}
+            onUsageUpdate={ps.onUsageUpdate}
           />
         ) : (
           <div className="flex h-full items-center justify-center text-[var(--t-muted)] text-sm">
@@ -89,6 +92,8 @@ export function PaneView({ paneId }: PaneViewProps) {
         connecting={ps.connecting}
         connected={ps.connected}
         availableCommands={ps.availableCommands}
+        usageUpdate={ps.usageUpdate}
+        supportsImages={ps.promptCapabilities.image === true}
         onSend={ps.sendPrompt}
         onCancel={ps.cancelPrompt}
         autoFocus={isFocused}

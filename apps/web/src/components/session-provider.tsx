@@ -2,7 +2,7 @@ import { createContext, useContext, useState, useEffect, type ReactNode } from "
 import { useQueryClient } from "@tanstack/react-query"
 import { api } from "@/lib/api"
 import { useSessionsQuery, useStartSessionMutation, useDeleteSessionMutation, useRenameSessionMutation, queryKeys } from "@/lib/queries"
-import type { Session } from "@/lib/types"
+import type { Session, McpServer } from "@/lib/types"
 
 interface SessionContextValue {
   sessions: Session[]
@@ -13,7 +13,7 @@ interface SessionContextValue {
 
   setActiveSession: (id: string) => void
   createSession: () => void
-  startSession: (agentType: string, cwd: string) => Promise<void>
+  startSession: (agentType: string, cwd: string, mcpServers?: McpServer[]) => Promise<void>
   cancelSetup: () => void
   deleteSession: (id: string) => Promise<void>
   renameSession: (id: string, name: string) => Promise<void>
@@ -119,8 +119,10 @@ export function SessionProvider({
     setActiveSessionId(null)
   }
 
-  const startSession = async (agentType: string, cwd: string) => {
-    const session = await startSessionMutation.mutateAsync({ agentType, cwd })
+  const startSession = async (agentType: string, cwd: string, mcpServers?: McpServer[]) => {
+    const args: { agentType: string; cwd: string; mcpServers?: McpServer[] } = { agentType, cwd }
+    if (mcpServers) args.mcpServers = mcpServers
+    const session = await startSessionMutation.mutateAsync(args)
     setActiveSessionId(session.id)
     setShowSetup(false)
   }

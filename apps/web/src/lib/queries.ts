@@ -1,6 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
 import { api } from "./api"
-import type { Session, SessionTokenUsage } from "./types"
+import type { Session, SessionTokenUsage, McpServer } from "./types"
 
 // --- Query keys ---
 
@@ -67,8 +67,10 @@ export function useSessionTokenUsageQuery(sessionId: string | undefined) {
 export function useStartSessionMutation() {
   const queryClient = useQueryClient()
   return useMutation({
-    mutationFn: async ({ agentType, cwd }: { agentType: string; cwd: string }) => {
-      const res = await api.sessions.create({ agent_type: agentType, cwd })
+    mutationFn: async ({ agentType, cwd, mcpServers }: { agentType: string; cwd: string; mcpServers?: McpServer[] }) => {
+      const body: { agent_type: string; cwd: string; mcpServers?: unknown[] } = { agent_type: agentType, cwd }
+      if (mcpServers) body.mcpServers = mcpServers
+      const res = await api.sessions.create(body)
       if (!res.ok) {
         const body = await res.json().catch(() => ({})) as { error?: string }
         throw new Error(body.error ?? `HTTP ${res.status}`)

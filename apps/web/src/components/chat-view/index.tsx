@@ -3,9 +3,9 @@ import { Streamdown } from "streamdown"
 import { useQueryClient } from "@tanstack/react-query"
 import { useConversationQuery, queryKeys } from "@/lib/queries"
 import { api } from "@/lib/api"
-import type { Session, SessionMode, SessionModesState } from "@/lib/types"
-import type { TurnData, ChatViewProps, ConfigOption, AvailableCommand } from "./types"
-import { parseToolCallBlock, parseResourceLinkBlock, mergeToolCallUpdates } from "./utils"
+import type { Session, SessionMode, SessionModesState, PromptCapabilities, McpCapabilities } from "@/lib/types"
+import type { TurnData, BlockData, ChatViewProps, ConfigOption, AvailableCommand, UsageState } from "./types"
+import { parseToolCallBlock, parseResourceLinkBlock, mergeToolCallUpdates, parsePlanBlock, safeParse } from "./utils"
 import { chatReducer, INITIAL_CHAT_STATE } from "./streaming"
 import { ToolCallBox } from "./tool-call-box"
 import { PlanView } from "./plan-view"
@@ -28,6 +28,108 @@ function ResourceLinkCard({ block }: { block: { id: string; content: string } })
   )
 }
 
+function groupBlocks(blocks: BlockData[]) {
+  const text: BlockData[] = []
+  const images: BlockData[] = []
+  const resourceLinks: BlockData[] = []
+  for (const b of blocks) {
+    if (b.kind === "text") text.push(b)
+    else if (b.kind === "image") images.push(b)
+    else if (b.kind === "resource_link") resourceLinks.push(b)
+  }
+  return { text, images, resourceLinks }
+}
+
+function UserTurn({ turn }: { turn: TurnData }) {
+  const { text, images, resourceLinks } = groupBlocks(turn.blocks)
+  const joinedText = text.map((b) => b.content).join("\n")
+  return (
+    <div className="mt-5 mb-3 -mx-3 px-3 py-2.5 rounded-lg bg-[var(--t-elevated)]">
+      <div className="flex items-start gap-2.5">
+        <span className="shrink-0 text-sm font-mono text-[var(--t-accent)] select-none leading-relaxed">&#10095;</span>
+        <div className="min-w-0 flex-1 space-y-2">
+          {joinedText && (
+            <div className="text-sm leading-relaxed whitespace-pre-wrap text-[var(--t-white)]">
+              {joinedText}
+            </div>
+          )}
+          {images.map((b) => {
+            const img = safeParse<{ data: string; mimeType: string }>(b.content)
+            if (!img) return null
+            return <img key={b.id} src={`data:${img.mimeType};base64,${img.data}`} alt="" className="max-h-48 rounded-md border border-[var(--t-border)]" />
+          })}
+          {resourceLinks.map((b) => <ResourceLinkCard key={b.id} block={b} />)}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+const VISIBLE_KINDS = new Set(["text", "thought", "tool_call", "resource_link", "plan"])
+
+type MergedBlock = { id: string; kind: string; content: string }
+
+function AssistantBlock({ block, sessionId }: { block: MergedBlock; sessionId: string }) {
+  if (block.kind === "thought") {
+    return (
+      <details className="pl-5 border-l-2 border-[var(--t-border)]">
+        <summary className="text-xs text-[var(--t-dim)] cursor-pointer select-none py-0.5">Thinking</summary>
+        <div className="text-sm leading-[1.7] text-[var(--t-muted)] italic">
+          <Streamdown plugins={markdownPlugins} components={markdownComponents} mode="static">
+            {block.content}
+          </Streamdown>
+        </div>
+      </details>
+    )
+  }
+  if (block.kind === "text") {
+    return (
+      <div className="text-sm leading-[1.7] text-[var(--t-text)] pl-5 border-l-2 border-[var(--t-border)]">
+        <Streamdown plugins={markdownPlugins} components={markdownComponents} mode="static">
+          {block.content}
+        </Streamdown>
+      </div>
+    )
+  }
+  if (block.kind === "plan") {
+    return (
+      <div className="pl-5 border-l-2 border-[var(--t-border)]">
+        <PlanView entries={parsePlanBlock(block.content)} />
+      </div>
+    )
+  }
+  if (block.kind === "tool_call") {
+    return (
+      <div className="pl-5 border-l-2 border-[var(--t-border)]">
+        <ToolCallBox state={parseToolCallBlock(block)} sessionId={sessionId} />
+      </div>
+    )
+  }
+  return (
+    <div className="pl-5 border-l-2 border-[var(--t-border)]">
+      <ResourceLinkCard block={block} />
+    </div>
+  )
+}
+
+function AssistantTurn({ turn, sessionId }: { turn: TurnData; sessionId: string }) {
+  const merged = mergeToolCallUpdates(turn.blocks)
+  // Render thought blocks first (collapsed), then everything else in order
+  const thoughts = merged.filter((b) => b.kind === "thought")
+  const rest = merged.filter((b) => b.kind !== "thought" && VISIBLE_KINDS.has(b.kind))
+  return (
+    <div className="py-1">
+      {thoughts.map((b) => <AssistantBlock key={b.id} block={b} sessionId={sessionId} />)}
+      {rest.map((b) => <AssistantBlock key={b.id} block={b} sessionId={sessionId} />)}
+      {turn.stop_reason && turn.stop_reason !== "end_turn" && (
+        <div className="pl-5 mt-1 text-[11px] font-mono text-[var(--t-dim)]">
+          [{turn.stop_reason}]
+        </div>
+      )}
+    </div>
+  )
+}
+
 export default function ChatView({
   sessionId,
   lastSentPrompt,
@@ -35,6 +137,9 @@ export default function ChatView({
   onConfigOptionsChange,
   onAvailableCommandsChange,
   onModesChange,
+  onPromptCapabilitiesChange,
+  onMcpCapabilitiesChange,
+  onUsageUpdate,
 }: ChatViewProps) {
   const queryClient = useQueryClient()
   const { data: queriedTurns = [] } = useConversationQuery(sessionId)
@@ -141,6 +246,18 @@ export default function ChatView({
         onConfigOptionsChange?.(configOpts)
         onAvailableCommandsChange?.(availCmds)
         onModesChange?.(modes)
+        onPromptCapabilitiesChange?.((data.promptCapabilities as PromptCapabilities) ?? {})
+        onMcpCapabilitiesChange?.((data.mcpCapabilities as McpCapabilities) ?? {})
+      } else if (eventType === "usage_update") {
+        const usage: UsageState = {
+          used: (data.used as number) ?? 0,
+          size: (data.size as number) ?? 0,
+        }
+        if (data.cost && typeof data.cost === "object") {
+          const c = data.cost as Record<string, unknown>
+          usage.cost = { amount: (c.amount as number) ?? 0, currency: (c.currency as string) ?? "USD" }
+        }
+        onUsageUpdate?.(usage)
       } else if (eventType === "config_option_update") {
         onConfigOptionsChange?.((data.configOptions as ConfigOption[]) ?? [])
       } else if (eventType === "available_commands_update") {
@@ -175,6 +292,9 @@ export default function ChatView({
         onConfigOptionsChange?.([])
         onAvailableCommandsChange?.([])
         onModesChange?.(null)
+        onPromptCapabilitiesChange?.({})
+        onMcpCapabilitiesChange?.({})
+        onUsageUpdate?.(null)
       } else {
         dispatch({ type: 'SSE_STREAMING', data })
       }
@@ -183,63 +303,17 @@ export default function ChatView({
     es.onerror = () => {}
 
     return () => es.close()
-  }, [sessionId, queryClient, onConfigOptionsChange, onAvailableCommandsChange, onModesChange])
+  }, [sessionId, queryClient, onConfigOptionsChange, onAvailableCommandsChange, onModesChange, onPromptCapabilitiesChange, onMcpCapabilitiesChange, onUsageUpdate])
 
   return (
     <div ref={scrollRef} className="h-full overflow-y-auto flex flex-col-reverse">
       <div className="max-w-3xl w-full mx-auto px-5 py-6 space-y-1">
         {allTurns.map((turn) => (
           <div key={turn.id}>
-            {turn.role === "user" ? (
-              <div className="mt-5 mb-3 -mx-3 px-3 py-2.5 rounded-lg bg-[var(--t-elevated)]">
-                <div className="flex items-start gap-2.5">
-                  <span className="shrink-0 text-sm font-mono text-[var(--t-accent)] select-none leading-relaxed">&#10095;</span>
-                  <div className="min-w-0 flex-1 space-y-2">
-                    {(() => {
-                      const text = turn.blocks.filter((b) => b.kind === "text").map((b) => b.content).join("\n")
-                      return text && (
-                        <div className="text-sm leading-relaxed whitespace-pre-wrap text-[var(--t-white)]">
-                          {text}
-                        </div>
-                      )
-                    })()}
-                    {turn.blocks
-                      .filter((b) => b.kind === "resource_link")
-                      .map((b) => <ResourceLinkCard key={b.id} block={b} />)}
-                  </div>
-                </div>
-              </div>
-            ) : (
-              <div className="py-1">
-                {mergeToolCallUpdates(turn.blocks)
-                  .filter((b) => b.kind === "text" || b.kind === "tool_call" || b.kind === "resource_link")
-                  .map((b) =>
-                    b.kind === "text" ? (
-                      <div
-                        key={b.id}
-                        className="text-sm leading-[1.7] text-[var(--t-text)] pl-5 border-l-2 border-[var(--t-border)]"
-                      >
-                        <Streamdown plugins={markdownPlugins} components={markdownComponents} mode="static">
-                          {b.content}
-                        </Streamdown>
-                      </div>
-                    ) : b.kind === "tool_call" ? (
-                      <div key={b.id} className="pl-5 border-l-2 border-[var(--t-border)]">
-                        <ToolCallBox state={parseToolCallBlock(b)} sessionId={sessionId} />
-                      </div>
-                    ) : (
-                      <div key={b.id} className="pl-5 border-l-2 border-[var(--t-border)]">
-                        <ResourceLinkCard block={b} />
-                      </div>
-                    )
-                  )}
-                {turn.stop_reason && turn.stop_reason !== "end_turn" && (
-                  <div className="pl-5 mt-1 text-[11px] font-mono text-[var(--t-dim)]">
-                    [{turn.stop_reason}]
-                  </div>
-                )}
-              </div>
-            )}
+            {turn.role === "user"
+              ? <UserTurn turn={turn} />
+              : <AssistantTurn turn={turn} sessionId={sessionId} />
+            }
           </div>
         ))}
 
@@ -249,9 +323,24 @@ export default function ChatView({
             {streamingBlocks.map((block, idx) => {
               const isLast = idx === streamingBlocks.length - 1
               const key = block.type === "text" ? block.id
+                : block.type === "thought" ? block.id
+                : block.type === "image" ? block.id
                 : block.type === "plan" ? "plan"
                 : block.state.toolCallId
-              return block.type === "text" ? (
+              return block.type === "image" ? (
+                <div key={key} className="pl-5 border-l-2 border-[var(--t-accent)]">
+                  <img src={`data:${block.mimeType};base64,${block.data}`} alt="" className="max-h-64 rounded-md border border-[var(--t-border)]" />
+                </div>
+              ) : block.type === "thought" ? (
+                <details key={key} className="pl-5 border-l-2 border-[var(--t-accent)]" open>
+                  <summary className="text-xs text-[var(--t-dim)] cursor-pointer select-none py-0.5">Thinking</summary>
+                  <div className="text-sm leading-[1.7] text-[var(--t-muted)] italic">
+                    <Streamdown plugins={markdownPlugins} components={markdownComponents} mode={isLast ? "streaming" : "static"} isAnimating={isLast}>
+                      {block.content}
+                    </Streamdown>
+                  </div>
+                </details>
+              ) : block.type === "text" ? (
                 <div
                   key={key}
                   className="text-sm leading-[1.7] text-[var(--t-text)] pl-5 border-l-2 border-[var(--t-accent)]"

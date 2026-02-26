@@ -15,7 +15,8 @@ export class AcpClient extends Context.Tag("@agentpane/AcpClient")<
       cwd: string,
       agentType: string,
       agentSessionId?: string | null,
-      authMethodId?: string
+      authMethodId?: string,
+      mcpServers?: ReadonlyArray<Record<string, unknown>>
     ) => Effect.Effect<{ agentSessionId: string }, AcpConnectionError | AuthRequiredError>
     readonly prompt: (
       sessionId: string,

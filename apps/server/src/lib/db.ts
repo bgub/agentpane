@@ -32,6 +32,7 @@ const migrations = Effect.gen(function* () {
     )
   `
   yield* addColumn("ALTER TABLE sessions ADD COLUMN agent_type TEXT NOT NULL DEFAULT 'claude-code'")
+  yield* addColumn("ALTER TABLE sessions ADD COLUMN mcp_servers TEXT")
   yield* sql`
     CREATE TABLE IF NOT EXISTS turns (
       id TEXT PRIMARY KEY,

@@ -7,6 +7,15 @@ import { AcpConnectionError } from "./schema.js"
 // Interfaces
 // ---------------------------------------------------------------------------
 
+export interface PromptCapabilities {
+  image?: boolean
+  resourceLinks?: boolean
+}
+
+export interface McpCapabilities {
+  supported?: boolean
+}
+
 export interface TerminalExitStatus {
   exitCode?: number | null
   signal?: string | null
@@ -29,6 +38,8 @@ export interface AgentConnection {
   prompting: boolean
   currentAssistantTurnId: string | null
   accumulatedText: string
+  accumulatedThought: string
+  lastPlanContent: string | null
   terminals: Map<string, TerminalState>
   pendingPermissions: Map<string, { resolve: (outcome: RequestPermissionOutcome) => void }>
   cwd: string
@@ -36,6 +47,8 @@ export interface AgentConnection {
   configOptions: Array<Record<string, unknown>>
   availableCommands: Array<Record<string, unknown>>
   modes: Record<string, unknown> | null
+  promptCapabilities: PromptCapabilities
+  mcpCapabilities: McpCapabilities
   supportsLoadSession: boolean
   supportsSessionList: boolean
 }

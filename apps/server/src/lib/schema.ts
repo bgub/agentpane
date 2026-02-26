@@ -6,6 +6,7 @@ export class Session extends Schema.Class<Session>("Session")({
   cwd: Schema.String,
   agent_type: Schema.String,
   agent_session_id: Schema.NullOr(Schema.String),
+  mcp_servers: Schema.NullOr(Schema.String),
   created_at: Schema.Number,
 }) {}
 

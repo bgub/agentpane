@@ -38,7 +38,8 @@ export class ConnectionManager extends Context.Tag("@agentpane/ConnectionManager
       cwd: string,
       agentType: string,
       agentSessionId?: string | null,
-      authMethodId?: string
+      authMethodId?: string,
+      mcpServers?: ReadonlyArray<Record<string, unknown>>
     ) => Effect.Effect<{ agentSessionId: string }, AcpConnectionError | AuthRequiredError>
     readonly disconnect: (sessionId: string) => Effect.Effect<void>
     readonly cancel: (sessionId: string) => Effect.Effect<void>
@@ -155,7 +156,8 @@ export class ConnectionManager extends Context.Tag("@agentpane/ConnectionManager
           cwd: string,
           agentType: string,
           agentSessionId?: string | null,
-          authMethodId?: string
+          authMethodId?: string,
+          mcpServers?: ReadonlyArray<Record<string, unknown>>
         ) {
           if (connections.has(sessionId)) {
             yield* disconnect(sessionId)
@@ -247,9 +249,22 @@ export class ConnectionManager extends Context.Tag("@agentpane/ConnectionManager
 
           // Extract capabilities from init response
           const agentCapabilities = (initResponse as Record<string, unknown>).agentCapabilities as
-            | { loadSession?: boolean; sessionCapabilities?: { list?: unknown } } | undefined
+            | { loadSession?: boolean; sessionCapabilities?: { list?: unknown }; prompt?: Record<string, unknown>; mcp?: Record<string, unknown> } | undefined
           const supportsLoadSession = agentCapabilities?.loadSession === true
           const supportsSessionList = agentCapabilities?.sessionCapabilities?.list != null
+
+          // Extract prompt and MCP capabilities
+          const promptCapabilities: import("./acp-types.js").PromptCapabilities = {}
+          if (agentCapabilities?.prompt) {
+            const pc = agentCapabilities.prompt
+            if (typeof pc.image === "boolean") promptCapabilities.image = pc.image
+            if (typeof pc.resourceLinks === "boolean") promptCapabilities.resourceLinks = pc.resourceLinks
+          }
+          const mcpCapabilities: import("./acp-types.js").McpCapabilities = {}
+          if (agentCapabilities?.mcp) {
+            const mc = agentCapabilities.mcp
+            if (typeof mc.supported === "boolean") mcpCapabilities.supported = mc.supported
+          }
 
           // Capture auth methods for better error messages if newSession fails
           const authMethods = (initResponse as Record<string, unknown>).authMethods as
@@ -280,7 +295,7 @@ export class ConnectionManager extends Context.Tag("@agentpane/ConnectionManager
                 clientConnection.loadSession({
                   sessionId: agentSessionId,
                   cwd: effectiveCwd,
-                  mcpServers: [],
+                  mcpServers: (mcpServers ?? []) as never,
                 }),
               catch: () =>
                 new AcpConnectionError({ message: "loadSession failed" }),
@@ -298,7 +313,7 @@ export class ConnectionManager extends Context.Tag("@agentpane/ConnectionManager
               try: () =>
                 clientConnection.newSession({
                   cwd: effectiveCwd,
-                  mcpServers: [],
+                  mcpServers: (mcpServers ?? []) as never,
                 }),
               catch: (err) => {
                 proc.kill()
@@ -331,6 +346,8 @@ export class ConnectionManager extends Context.Tag("@agentpane/ConnectionManager
             prompting: false,
             currentAssistantTurnId: null,
             accumulatedText: "",
+            accumulatedThought: "",
+            lastPlanContent: null,
             terminals: new Map(),
             pendingPermissions: new Map(),
             cwd: effectiveCwd,
@@ -340,6 +357,8 @@ export class ConnectionManager extends Context.Tag("@agentpane/ConnectionManager
             modes: (sessionResponse?.modes && typeof sessionResponse.modes === "object")
               ? (sessionResponse.modes as Record<string, unknown>)
               : null,
+            promptCapabilities,
+            mcpCapabilities,
             supportsLoadSession,
             supportsSessionList,
           }
@@ -367,6 +386,8 @@ export class ConnectionManager extends Context.Tag("@agentpane/ConnectionManager
             configOptions: agentConn.configOptions,
             availableCommands: agentConn.availableCommands,
             modes: agentConn.modes,
+            promptCapabilities: agentConn.promptCapabilities,
+            mcpCapabilities: agentConn.mcpCapabilities,
           })
 
           return { agentSessionId: resolvedAgentSessionId! }
@@ -411,6 +432,8 @@ export class ConnectionManager extends Context.Tag("@agentpane/ConnectionManager
           conn.currentAssistantTurnId = assistantTurnId
           if (!prompting) {
             conn.accumulatedText = ""
+            conn.accumulatedThought = ""
+            conn.lastPlanContent = null
             promptingSessions.delete(sessionId)
           } else {
             promptingSessions.add(sessionId)

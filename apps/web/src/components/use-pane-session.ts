@@ -1,10 +1,86 @@
-import { useState, useEffect, useRef } from "react"
+import { useReducer, useEffect, useRef } from "react"
 import { useSession } from "./session-provider"
-import { api } from "@/lib/api"
-import type { ConfigOption, AvailableCommand } from "./chat-view/types"
-import type { Session, AuthMethod, SessionModesState } from "@/lib/types"
+import { api, type PromptInputBlock } from "@/lib/api"
+import type { ConfigOption, AvailableCommand, UsageState } from "./chat-view/types"
+import type { Session, AuthMethod, SessionModesState, PromptCapabilities, McpCapabilities } from "@/lib/types"
 
-interface PaneSessionState {
+interface TransientState {
+  connecting: boolean
+  lastSentPrompt: { text: string; ts: number } | null
+  promptError: { message: string; ts: number } | null
+  configOptions: ConfigOption[]
+  availableCommands: AvailableCommand[]
+  pendingAuthMethods: AuthMethod[]
+  modes: SessionModesState | null
+  promptCapabilities: PromptCapabilities
+  mcpCapabilities: McpCapabilities
+  usageUpdate: UsageState | null
+}
+
+type Action =
+  | { type: "RESET" }
+  | { type: "SET_CONNECTING"; value: boolean }
+  | { type: "SET_LAST_SENT_PROMPT"; value: { text: string; ts: number } }
+  | { type: "SET_PROMPT_ERROR"; value: { message: string; ts: number } }
+  | { type: "SET_CONFIG_OPTIONS"; value: ConfigOption[] }
+  | { type: "SET_AVAILABLE_COMMANDS"; value: AvailableCommand[] }
+  | { type: "SET_PENDING_AUTH_METHODS"; value: AuthMethod[] }
+  | { type: "SET_MODES"; value: SessionModesState | null }
+  | { type: "UPDATE_MODE"; modeId: string }
+  | { type: "SET_PROMPT_CAPABILITIES"; value: PromptCapabilities }
+  | { type: "SET_MCP_CAPABILITIES"; value: McpCapabilities }
+  | { type: "SET_USAGE_UPDATE"; value: UsageState | null }
+  | { type: "CONNECT_ERROR"; promptError: { message: string; ts: number }; authMethods?: AuthMethod[] }
+
+const INITIAL_STATE: TransientState = {
+  connecting: false,
+  lastSentPrompt: null,
+  promptError: null,
+  configOptions: [],
+  availableCommands: [],
+  pendingAuthMethods: [],
+  modes: null,
+  promptCapabilities: {},
+  mcpCapabilities: {},
+  usageUpdate: null,
+}
+
+function reducer(state: TransientState, action: Action): TransientState {
+  switch (action.type) {
+    case "RESET":
+      return INITIAL_STATE
+    case "SET_CONNECTING":
+      return { ...state, connecting: action.value }
+    case "SET_LAST_SENT_PROMPT":
+      return { ...state, lastSentPrompt: action.value }
+    case "SET_PROMPT_ERROR":
+      return { ...state, promptError: action.value }
+    case "SET_CONFIG_OPTIONS":
+      return { ...state, configOptions: action.value }
+    case "SET_AVAILABLE_COMMANDS":
+      return { ...state, availableCommands: action.value }
+    case "SET_PENDING_AUTH_METHODS":
+      return { ...state, pendingAuthMethods: action.value }
+    case "SET_MODES":
+      return { ...state, modes: action.value }
+    case "UPDATE_MODE":
+      return { ...state, modes: { ...(state.modes ?? {}), currentModeId: action.modeId } }
+    case "SET_PROMPT_CAPABILITIES":
+      return { ...state, promptCapabilities: action.value }
+    case "SET_MCP_CAPABILITIES":
+      return { ...state, mcpCapabilities: action.value }
+    case "SET_USAGE_UPDATE":
+      return { ...state, usageUpdate: action.value }
+    case "CONNECT_ERROR":
+      return {
+        ...state,
+        pendingAuthMethods: action.authMethods ?? [],
+        promptError: action.promptError,
+      }
+  }
+}
+
+export interface PaneSessionState {
   activeSession: Session | undefined
   connected: boolean
   prompting: boolean
@@ -15,16 +91,22 @@ interface PaneSessionState {
   availableCommands: AvailableCommand[]
   pendingAuthMethods: AuthMethod[]
   modes: SessionModesState | null
+  promptCapabilities: PromptCapabilities
+  mcpCapabilities: McpCapabilities
+  usageUpdate: UsageState | null
   connectAgent: () => Promise<void>
   authenticateAndConnect: (methodId: string) => Promise<void>
   disconnectAgent: () => Promise<void>
-  sendPrompt: (text: string) => Promise<void>
+  sendPrompt: (text: string, blocks?: PromptInputBlock[]) => Promise<void>
   cancelPrompt: () => void
   setConfigOption: (configId: string, value: string) => Promise<void>
   setMode: (modeId: string) => Promise<void>
   onConfigOptionsChange: (opts: ConfigOption[]) => void
   onAvailableCommandsChange: (cmds: AvailableCommand[]) => void
   onModesChange: (modes: SessionModesState | null) => void
+  onPromptCapabilitiesChange: (caps: PromptCapabilities) => void
+  onMcpCapabilitiesChange: (caps: McpCapabilities) => void
+  onUsageUpdate: (usage: UsageState | null) => void
 }
 
 export function usePaneSession(sessionId: string | undefined): PaneSessionState {
@@ -34,31 +116,19 @@ export function usePaneSession(sessionId: string | undefined): PaneSessionState 
   const connected = !!activeSession?.connected
   const prompting = !!activeSession?.prompting
 
-  const [connecting, setConnecting] = useState(false)
-  const [lastSentPrompt, setLastSentPrompt] = useState<{ text: string; ts: number } | null>(null)
-  const [promptError, setPromptError] = useState<{ message: string; ts: number } | null>(null)
-  const [configOptions, setConfigOptions] = useState<ConfigOption[]>([])
-  const [availableCommands, setAvailableCommands] = useState<AvailableCommand[]>([])
-  const [pendingAuthMethods, setPendingAuthMethods] = useState<AuthMethod[]>([])
-  const [modes, setModes] = useState<SessionModesState | null>(null)
-  const configOptionsRef = useRef(configOptions)
-  configOptionsRef.current = configOptions
+  const [state, dispatch] = useReducer(reducer, INITIAL_STATE)
+  const configOptionsRef = useRef(state.configOptions)
+  configOptionsRef.current = state.configOptions
 
   // Clear transient state when session changes
   useEffect(() => {
     void sessionId
-    setConnecting(false)
-    setLastSentPrompt(null)
-    setPromptError(null)
-    setConfigOptions([])
-    setAvailableCommands([])
-    setPendingAuthMethods([])
-    setModes(null)
+    dispatch({ type: "RESET" })
   }, [sessionId])
 
   // Returns true if connected successfully, false on error
   const attemptConnect = async (session: Session, authMethodId?: string): Promise<boolean> => {
-    setConnecting(true)
+    dispatch({ type: "SET_CONNECTING", value: true })
     try {
       const body: { agent_type: string; cwd: string; authMethodId?: string } = {
         agent_type: session.agent_type,
@@ -72,32 +142,39 @@ export function usePaneSession(sessionId: string | undefined): PaneSessionState 
           authMethods?: AuthMethod[]
         }
         if (res.status === 401 && Array.isArray(err.authMethods)) {
-          setPendingAuthMethods(err.authMethods)
-          setPromptError({ message: `Error: ${err.error ?? "Authentication required"}`, ts: Date.now() })
+          dispatch({
+            type: "CONNECT_ERROR",
+            promptError: { message: `Error: ${err.error ?? "Authentication required"}`, ts: Date.now() },
+            authMethods: err.authMethods,
+          })
         } else {
-          setPendingAuthMethods([])
-          setPromptError({ message: `Error: ${err.error ?? "Connection failed"}`, ts: Date.now() })
+          dispatch({
+            type: "CONNECT_ERROR",
+            promptError: { message: `Error: ${err.error ?? "Connection failed"}`, ts: Date.now() },
+          })
         }
         return false
       }
-      setPendingAuthMethods([])
+      dispatch({ type: "SET_PENDING_AUTH_METHODS", value: [] })
       return true
     } catch {
-      setPendingAuthMethods([])
-      setPromptError({ message: "Error: Failed to connect agent", ts: Date.now() })
+      dispatch({
+        type: "CONNECT_ERROR",
+        promptError: { message: "Error: Failed to connect agent", ts: Date.now() },
+      })
       return false
     } finally {
-      setConnecting(false)
+      dispatch({ type: "SET_CONNECTING", value: false })
     }
   }
 
   const connectAgent = async () => {
-    if (!activeSession || connecting) return
+    if (!activeSession || state.connecting) return
     await attemptConnect(activeSession)
   }
 
   const authenticateAndConnect = async (methodId: string) => {
-    if (!activeSession || connecting || !methodId) return
+    if (!activeSession || state.connecting || !methodId) return
     await attemptConnect(activeSession, methodId)
   }
 
@@ -109,36 +186,37 @@ export function usePaneSession(sessionId: string | undefined): PaneSessionState 
   const setConfigOption = async (configId: string, value: string) => {
     if (!activeSession) return
     const prev = configOptionsRef.current
-    setConfigOptions(prev.map((opt) =>
-      opt.id === configId ? { ...opt, currentValue: value } : opt
-    ))
+    dispatch({
+      type: "SET_CONFIG_OPTIONS",
+      value: prev.map((opt) => (opt.id === configId ? { ...opt, currentValue: value } : opt)),
+    })
     try {
       const res = await api.sessions.setConfig(activeSession.id, configId, value)
       if (res.ok) {
         const updated = await res.json() as ConfigOption[]
-        setConfigOptions(updated)
+        dispatch({ type: "SET_CONFIG_OPTIONS", value: updated })
       } else {
-        setConfigOptions(prev)
+        dispatch({ type: "SET_CONFIG_OPTIONS", value: prev })
       }
     } catch {
-      setConfigOptions(prev)
+      dispatch({ type: "SET_CONFIG_OPTIONS", value: prev })
     }
   }
 
   const setMode = async (modeId: string) => {
     if (!activeSession) return
-    const prev = modes
-    setModes((old) => ({ ...(old ?? {}), currentModeId: modeId }))
+    const prev = state.modes
+    dispatch({ type: "UPDATE_MODE", modeId })
     try {
       const res = await api.sessions.setMode(activeSession.id, modeId)
       if (res.ok) {
         const updated = await res.json() as SessionModesState | null
-        setModes(updated)
+        dispatch({ type: "SET_MODES", value: updated })
       } else {
-        setModes(prev)
+        dispatch({ type: "SET_MODES", value: prev })
       }
     } catch {
-      setModes(prev)
+      dispatch({ type: "SET_MODES", value: prev })
     }
   }
 
@@ -147,10 +225,10 @@ export function usePaneSession(sessionId: string | undefined): PaneSessionState 
     api.sessions.cancel(activeSession.id).catch(() => {})
   }
 
-  const sendPrompt = async (text: string) => {
+  const sendPrompt = async (text: string, blocks?: PromptInputBlock[]) => {
     if (!activeSession || prompting) return
 
-    setLastSentPrompt({ text, ts: Date.now() })
+    dispatch({ type: "SET_LAST_SENT_PROMPT", value: { text, ts: Date.now() } })
 
     if (!connected) {
       const ok = await attemptConnect(activeSession)
@@ -158,13 +236,14 @@ export function usePaneSession(sessionId: string | undefined): PaneSessionState 
     }
 
     try {
-      const res = await api.sessions.prompt(activeSession.id, text)
+      const body = blocks ? { blocks } : text
+      const res = await api.sessions.prompt(activeSession.id, body)
       if (!res.ok) {
         const err = await res.json().catch(() => ({ error: "Unknown error" }))
-        setPromptError({ message: `Error: ${err.error}`, ts: Date.now() })
+        dispatch({ type: "SET_PROMPT_ERROR", value: { message: `Error: ${err.error}`, ts: Date.now() } })
       }
     } catch {
-      setPromptError({ message: "Error: Network error", ts: Date.now() })
+      dispatch({ type: "SET_PROMPT_ERROR", value: { message: "Error: Network error", ts: Date.now() } })
     }
   }
 
@@ -175,7 +254,7 @@ export function usePaneSession(sessionId: string | undefined): PaneSessionState 
       .then(async (res) => {
         if (!res.ok) return
         const data = await res.json() as SessionModesState | null
-        setModes(data)
+        dispatch({ type: "SET_MODES", value: data })
       })
       .catch(() => {})
   }, [activeSessionId, connected])
@@ -184,13 +263,16 @@ export function usePaneSession(sessionId: string | undefined): PaneSessionState 
     activeSession,
     connected,
     prompting,
-    connecting,
-    lastSentPrompt,
-    promptError,
-    configOptions,
-    availableCommands,
-    pendingAuthMethods,
-    modes,
+    connecting: state.connecting,
+    lastSentPrompt: state.lastSentPrompt,
+    promptError: state.promptError,
+    configOptions: state.configOptions,
+    availableCommands: state.availableCommands,
+    pendingAuthMethods: state.pendingAuthMethods,
+    modes: state.modes,
+    promptCapabilities: state.promptCapabilities,
+    mcpCapabilities: state.mcpCapabilities,
+    usageUpdate: state.usageUpdate,
     connectAgent,
     authenticateAndConnect,
     disconnectAgent,
@@ -198,8 +280,11 @@ export function usePaneSession(sessionId: string | undefined): PaneSessionState 
     cancelPrompt,
     setConfigOption,
     setMode,
-    onConfigOptionsChange: setConfigOptions,
-    onAvailableCommandsChange: setAvailableCommands,
-    onModesChange: setModes,
+    onConfigOptionsChange: (opts: ConfigOption[]) => dispatch({ type: "SET_CONFIG_OPTIONS", value: opts }),
+    onAvailableCommandsChange: (cmds: AvailableCommand[]) => dispatch({ type: "SET_AVAILABLE_COMMANDS", value: cmds }),
+    onModesChange: (modes: SessionModesState | null) => dispatch({ type: "SET_MODES", value: modes }),
+    onPromptCapabilitiesChange: (caps: PromptCapabilities) => dispatch({ type: "SET_PROMPT_CAPABILITIES", value: caps }),
+    onMcpCapabilitiesChange: (caps: McpCapabilities) => dispatch({ type: "SET_MCP_CAPABILITIES", value: caps }),
+    onUsageUpdate: (usage: UsageState | null) => dispatch({ type: "SET_USAGE_UPDATE", value: usage }),
   }
 }

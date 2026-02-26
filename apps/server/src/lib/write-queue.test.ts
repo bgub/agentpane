@@ -26,6 +26,7 @@ const makeRepoHarness = (seedQueued: Array<QueuedWriteOp> = []): RepoHarness => 
     updateCwd: () => Effect.void,
     updateConfig: () => Effect.die("unused") as never,
     updateAgentSessionId: () => Effect.void,
+    updateMcpServers: () => Effect.void,
     addTurn: () => Effect.die("unused") as never,
     completeTurn: () => Effect.void,
     addMessageBlock: () => Effect.die("unused") as never,

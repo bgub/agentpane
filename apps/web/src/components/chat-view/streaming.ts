@@ -5,6 +5,9 @@ import type { StreamingBlock, ToolCallState, PlanEntry, PermissionOption } from 
 let textBlockCounter = 0
 function nextTextId() { return `text-${++textBlockCounter}` }
 
+let thoughtBlockCounter = 0
+function nextThoughtId() { return `thought-${++thoughtBlockCounter}` }
+
 function findToolCallIndex(blocks: StreamingBlock[], toolCallId: string): number {
   return blocks.findIndex((b) => b.type === "tool_call" && b.state.toolCallId === toolCallId)
 }
@@ -29,13 +32,33 @@ function applyEventToBlocks(
 ): StreamingBlock[] {
   const eventType = data.sessionUpdate as string
 
-  if (eventType === "agent_message_chunk" && (data.content as Record<string, unknown>)?.type === "text") {
+  if (eventType === "agent_thought_chunk" && (data.content as Record<string, unknown>)?.type === "text") {
     const text = (data.content as Record<string, unknown>).text as string
     const last = blocks[blocks.length - 1]
-    if (last?.type === "text") {
-      return [...blocks.slice(0, -1), { type: "text", id: last.id, content: last.content + text }]
+    if (last?.type === "thought") {
+      return [...blocks.slice(0, -1), { type: "thought", id: last.id, content: last.content + text }]
     }
-    return [...blocks, { type: "text", id: nextTextId(), content: text }]
+    return [...blocks, { type: "thought", id: nextThoughtId(), content: text }]
+  }
+
+  if (eventType === "user_message_chunk") {
+    return blocks
+  }
+
+  if (eventType === "agent_message_chunk") {
+    const content = data.content as Record<string, unknown>
+    if (content?.type === "text") {
+      const text = content.text as string
+      const last = blocks[blocks.length - 1]
+      if (last?.type === "text") {
+        return [...blocks.slice(0, -1), { type: "text", id: last.id, content: last.content + text }]
+      }
+      return [...blocks, { type: "text", id: nextTextId(), content: text }]
+    }
+    if (content?.type === "image") {
+      return [...blocks, { type: "image", id: nextTextId(), data: content.data as string, mimeType: content.mimeType as string }]
+    }
+    return blocks
   }
 
   if (eventType === "tool_call" || eventType === "tool_call_update") {

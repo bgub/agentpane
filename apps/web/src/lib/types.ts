@@ -34,3 +34,17 @@ export interface SessionModesState {
   currentModeId?: string
   modes?: SessionMode[]
 }
+
+export interface PromptCapabilities {
+  image?: boolean
+  resourceLinks?: boolean
+}
+
+export interface McpCapabilities {
+  supported?: boolean
+}
+
+export type McpServer =
+  | { name: string; type: "stdio"; command: string; args?: string[]; env?: Record<string, string> }
+  | { name: string; type: "http"; url: string }
+  | { name: string; type: "sse"; url: string }

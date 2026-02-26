@@ -23,6 +23,10 @@ export async function readJsonObject(c: Context): Promise<JsonObject> {
   return body as JsonObject
 }
 
+export function safeParse<T = unknown>(json: string): T | null {
+  try { return JSON.parse(json) as T } catch { return null }
+}
+
 export const parseLastEventId = (value: string | undefined): number | undefined => {
   if (!value) return undefined
   const parsed = Number.parseInt(value, 10)
