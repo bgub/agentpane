@@ -50,16 +50,20 @@ export interface ClientDeps {
 // makeClient — ACP protocol callback factory
 // ---------------------------------------------------------------------------
 
+export interface ConnRef {
+  current: AgentConnection | null
+  /** Updates that arrived before current was set — drained by connect() */
+  pending: Array<Record<string, unknown>>
+}
+
 export const makeClient = (
   deps: ClientDeps,
   sessionId: string,
-  connRef: { current: AgentConnection | null }
+  connRef: ConnRef
 ): ((agent: Agent) => Client) => {
   return (_agent: Agent): Client => ({
     sessionUpdate: async (params) => {
       const conn = connRef.current
-      if (!conn) return
-
       const update = params.update as Record<string, unknown>
       const eventType = update.sessionUpdate as string | undefined
 
@@ -71,79 +75,21 @@ export const makeClient = (
         console.log(`[${now}ms] sessionUpdate: ${eventType}${preview} (session ${sessionId.slice(0, 8)})`)
       }
 
-      // Accumulate text for DB persistence
-      if (
-        eventType === "agent_message_chunk" &&
-        (update.content as Record<string, unknown>)?.type === "text"
-      ) {
-        conn.accumulatedText += (update.content as Record<string, unknown>).text as string
+      if (eventType === "available_commands_update") {
+        const cmds = update.availableCommands
+        console.log(`[acp] available_commands_update: conn=${!!conn}, commands=${Array.isArray(cmds) ? cmds.length : "missing"} (session ${sessionId.slice(0, 8)})`)
       }
 
-      // Accumulate thought text for DB persistence
-      if (
-        eventType === "agent_thought_chunk" &&
-        (update.content as Record<string, unknown>)?.type === "text"
-      ) {
-        conn.accumulatedThought += (update.content as Record<string, unknown>).text as string
+      if (conn) {
+        applySessionUpdate(deps, sessionId, conn, update, eventType)
+      } else {
+        // Buffer updates that arrive before connect() finishes (e.g. Codex
+        // sends available_commands_update right after newSession response)
+        connRef.pending.push(update)
+        console.log(`[acp] buffered pending update: ${eventType} (session ${sessionId.slice(0, 8)})`)
       }
 
-      // Persist tool calls immediately — flush accumulated thought/text first
-      // so interleaving is preserved. The frontend hoists thought blocks to
-      // the top of the turn, so multiple thought segments render naturally.
-      if (
-        conn.currentAssistantTurnId &&
-        (eventType === "tool_call" || eventType === "tool_call_update")
-      ) {
-        if (eventType === "tool_call") {
-          if (conn.accumulatedThought) {
-            deps.enqueueMessageBlock(sessionId, conn.currentAssistantTurnId, "thought", conn.accumulatedThought)
-            conn.accumulatedThought = ""
-          }
-          if (conn.accumulatedText) {
-            deps.enqueueMessageBlock(sessionId, conn.currentAssistantTurnId, "text", conn.accumulatedText)
-            conn.accumulatedText = ""
-          }
-        }
-        deps.enqueueMessageBlock(
-          sessionId,
-          conn.currentAssistantTurnId,
-          eventType,
-          JSON.stringify(update)
-        )
-      }
-
-      // Keep stored configOptions in sync when agent pushes updates
-      if (eventType === "config_option_update" && conn) {
-        conn.configOptions = (update.configOptions as Array<Record<string, unknown>>) ?? []
-      }
-
-      // Keep stored availableCommands in sync when agent pushes updates
-      if (eventType === "available_commands_update" && conn) {
-        conn.availableCommands = (update.availableCommands as Array<Record<string, unknown>>) ?? []
-      }
-
-      // Keep stored modes in sync when agent pushes updates
-      if (eventType === "current_mode_update" && conn) {
-        if (update.modes && typeof update.modes === "object") {
-          conn.modes = update.modes as Record<string, unknown>
-        } else if (typeof update.currentModeId === "string") {
-          conn.modes = { ...(conn.modes ?? {}), currentModeId: update.currentModeId }
-        } else if (typeof update.modeId === "string") {
-          conn.modes = { ...(conn.modes ?? {}), currentModeId: update.modeId }
-        }
-      }
-
-      // Store latest plan content for DB persistence on completion
-      if (eventType === "plan") {
-        conn.lastPlanContent = JSON.stringify(update)
-      }
-
-      // Persist session title when agent pushes session_info_update
-      if (eventType === "session_info_update" && typeof update.title === "string") {
-        deps.updateSessionName(sessionId, update.title).catch(() => {})
-      }
-
-      // Broadcast to all subscribers via session-level broadcaster
+      // Broadcast to all subscribers regardless of conn state
       if (debugStream && eventType === "agent_message_chunk") {
         const now = performance.now().toFixed(1)
         console.log(`[${now}ms] broadcast: agent_message_chunk (session ${sessionId.slice(0, 8)})`)
@@ -289,4 +235,77 @@ export const makeClient = (
       return {}
     },
   })
+}
+
+/** Apply a session update to an established connection's in-memory state. */
+export function applySessionUpdate(
+  deps: ClientDeps,
+  sessionId: string,
+  conn: AgentConnection,
+  update: Record<string, unknown>,
+  eventType: string | undefined
+): void {
+  // Accumulate text for DB persistence
+  if (
+    eventType === "agent_message_chunk" &&
+    (update.content as Record<string, unknown>)?.type === "text"
+  ) {
+    conn.accumulatedText += (update.content as Record<string, unknown>).text as string
+  }
+
+  // Accumulate thought text for DB persistence
+  if (
+    eventType === "agent_thought_chunk" &&
+    (update.content as Record<string, unknown>)?.type === "text"
+  ) {
+    conn.accumulatedThought += (update.content as Record<string, unknown>).text as string
+  }
+
+  // Persist tool calls immediately
+  if (
+    conn.currentAssistantTurnId &&
+    (eventType === "tool_call" || eventType === "tool_call_update")
+  ) {
+    if (eventType === "tool_call") {
+      if (conn.accumulatedThought) {
+        deps.enqueueMessageBlock(sessionId, conn.currentAssistantTurnId, "thought", conn.accumulatedThought)
+        conn.accumulatedThought = ""
+      }
+      if (conn.accumulatedText) {
+        deps.enqueueMessageBlock(sessionId, conn.currentAssistantTurnId, "text", conn.accumulatedText)
+        conn.accumulatedText = ""
+      }
+    }
+    deps.enqueueMessageBlock(
+      sessionId,
+      conn.currentAssistantTurnId,
+      eventType,
+      JSON.stringify(update)
+    )
+  }
+
+  // Keep stored state in sync when agent pushes updates
+  if (eventType === "config_option_update") {
+    conn.configOptions = (update.configOptions as Array<Record<string, unknown>>) ?? []
+  }
+  if (eventType === "available_commands_update") {
+    conn.availableCommands = (update.availableCommands as Array<Record<string, unknown>>) ?? []
+  }
+  if (eventType === "current_mode_update") {
+    if (update.modes && typeof update.modes === "object") {
+      conn.modes = update.modes as Record<string, unknown>
+    } else if (typeof update.currentModeId === "string") {
+      conn.modes = { ...(conn.modes ?? {}), currentModeId: update.currentModeId }
+    } else if (typeof update.modeId === "string") {
+      conn.modes = { ...(conn.modes ?? {}), currentModeId: update.modeId }
+    }
+  }
+  if (eventType === "plan") {
+    conn.lastPlanContent = JSON.stringify(update)
+  }
+
+  // Persist session title
+  if (eventType === "session_info_update" && typeof update.title === "string") {
+    deps.updateSessionName(sessionId, update.title).catch(() => {})
+  }
 }

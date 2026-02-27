@@ -32,7 +32,7 @@ import {
   type AgentConnection,
   requireConnection,
 } from "./acp-types.js"
-import { makeClient, type ClientDeps } from "./acp-client-callbacks.js"
+import { makeClient, applySessionUpdate, type ClientDeps, type ConnRef } from "./acp-client-callbacks.js"
 import { EventHub } from "./event-hub.js"
 import { WriteQueue } from "./write-queue.js"
 
@@ -241,7 +241,7 @@ export class ConnectionManager extends Context.Tag("@agentpane/ConnectionManager
             readableWeb as unknown as ReadableStream<Uint8Array>
           )
 
-          const connRef: { current: AgentConnection | null } = { current: null }
+          const connRef: ConnRef = { current: null, pending: [] }
           const clientConnection = new ClientSideConnection(
             makeClient(clientDeps, sessionId, connRef),
             stream
@@ -385,6 +385,16 @@ export class ConnectionManager extends Context.Tag("@agentpane/ConnectionManager
           connRef.current = agentConn
           connections.set(sessionId, agentConn)
 
+          // Drain updates that arrived before connRef.current was set
+          // (e.g. Codex sends available_commands_update right after session response)
+          console.log(`[connect] draining ${connRef.pending.length} pending updates, sessionResponse.availableCommands=${JSON.stringify(sessionResponse?.availableCommands)} (session ${sessionId.slice(0, 8)})`)
+          for (const pending of connRef.pending) {
+            console.log(`[connect] applying pending: ${pending.sessionUpdate} (session ${sessionId.slice(0, 8)})`)
+            applySessionUpdate(clientDeps, sessionId, agentConn, pending, pending.sessionUpdate as string | undefined)
+          }
+          connRef.pending.length = 0
+          console.log(`[connect] after drain: availableCommands=${agentConn.availableCommands.length} (session ${sessionId.slice(0, 8)})`)
+
           yield* writeQueue.enqueue({
             _tag: "UpdateAgentSessionId",
             sessionId,
@@ -401,6 +411,7 @@ export class ConnectionManager extends Context.Tag("@agentpane/ConnectionManager
           })
 
           eventHub.markConnected(sessionId)
+          console.log(`[connect] broadcasting "connected" with availableCommands=${agentConn.availableCommands.length} (session ${sessionId.slice(0, 8)})`)
           eventHub.broadcast(sessionId, {
             sessionUpdate: "connected",
             configOptions: agentConn.configOptions,

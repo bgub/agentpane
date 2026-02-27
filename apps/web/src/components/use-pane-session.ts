@@ -250,6 +250,13 @@ export function usePaneSession(sessionId: string | undefined): PaneSessionState 
   const activeSessionId = activeSession?.id
   useEffect(() => {
     if (!activeSessionId || !connected) return
+    api.sessions.commands(activeSessionId)
+      .then(async (res) => {
+        if (!res.ok) return
+        const data = await res.json() as AvailableCommand[]
+        dispatch({ type: "SET_AVAILABLE_COMMANDS", value: data })
+      })
+      .catch(() => {})
     api.sessions.mode(activeSessionId)
       .then(async (res) => {
         if (!res.ok) return

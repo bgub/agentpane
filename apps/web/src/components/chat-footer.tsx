@@ -47,15 +47,12 @@ export function ChatFooter({ sessionId, active, prompting, connecting, connected
       : null
 
   // Compute filtered commands based on current input
-  const filteredCommands = (() => {
-    if (!input.startsWith("/") || availableCommands.length === 0) return []
-    const prefix = input.slice(1).toLowerCase()
-    // Only show autocomplete when typing the command (no space yet)
-    if (input.includes(" ")) return []
-    return availableCommands.filter((cmd) =>
-      cmd.name.toLowerCase().startsWith(prefix)
-    )
-  })()
+  const showingSlash = input.startsWith("/") && !input.includes(" ")
+  const filteredCommands = showingSlash
+    ? availableCommands.filter((cmd) =>
+        cmd.name.toLowerCase().startsWith(input.slice(1).toLowerCase())
+      )
+    : []
 
   const processFiles = (files: FileList | File[]) => {
     for (const file of files) {
