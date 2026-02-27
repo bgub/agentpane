@@ -30,15 +30,15 @@ This starts an API server on port 3456 and a web frontend on port 6767. Open [lo
 ```sh
 git clone https://github.com/bgub/agentpane.git
 cd agentpane
-pnpm install
-pnpm dev
+npm install
+npm run dev
 ```
 
-`pnpm dev` starts both the Next.js dev server (port 6767) and the Hono API server (port 3456) via Turborepo. The frontend rewrites `/api` requests to the backend.
+`npm run dev` starts both the Next.js dev server (port 6767) and the Hono API server (port 3456) via Turborepo. The frontend rewrites `/api` requests to the backend.
 
 ## Architecture
 
-Turborepo + pnpm workspaces monorepo with three apps:
+Turborepo + npm workspaces monorepo with three apps:
 
 | App | Path | Description |
 |---|---|---|

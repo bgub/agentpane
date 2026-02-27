@@ -10,11 +10,11 @@ Communication with agents uses ACP (Agent Client Protocol) — JSON-RPC 2.0 over
 npx agentpane          # starts API (:3456) + frontend (:6767)
 ```
 
-For development: `pnpm dev` starts both Next.js dev server (port 6767) and Hono API server (port 3456) via Turbo. Next.js rewrites `/api` requests to localhost:3456.
+For development: `npm run dev` starts both Next.js dev server (port 6767) and Hono API server (port 3456) via Turbo. Next.js rewrites `/api` requests to localhost:3456.
 
 ## Tech Stack
 
-- **Monorepo:** Turborepo + pnpm workspaces (`apps/*`)
+- **Monorepo:** Turborepo + npm workspaces (`apps/*`)
 - **Backend (`apps/server`):** Hono + Effect.ts services/layers, Node.js server on port 3456. Published to npm as `agentpane`.
 - **Frontend (`apps/web`):** Next.js 16 (App Router, standalone output), React 19, Tailwind CSS 4, TanStack React Query.
 - **Docs (`apps/docs`):** Astro + Starlight.
@@ -45,7 +45,7 @@ Hono HTTP server with Effect.ts service layers composed into `ManagedRuntime`:
 - `src/lib/write-ops.ts` — Write operation types for the queue
 - `src/lib/acp-client-callbacks.ts` — Agent→client callbacks (sessionUpdate, file I/O, terminal management)
 - `src/lib/acp-types.ts` — ACP protocol interfaces
-- `src/lib/providers.ts` — Agent provider config (claude-code, codex)
+- `src/lib/providers.ts` — Agent provider config + binary resolution (walks up `node_modules/.bin/` for npm hoisting compatibility)
 - `src/routes/sessions.ts` — All Hono route handlers
 - `src/routes/validation.ts` — Request validation helpers
 
@@ -152,11 +152,16 @@ Next.js 16 App Router — pure UI, no backend dependencies. Same-origin with the
 - Streaming markdown via Streamdown with Shiki syntax highlighting
 - No auth tokens — API calls use plain `fetch` with relative URLs
 
+### Distribution
+
+- Agent binaries (`claude-agent-acp`, `codex-acp`) are resolved by walking up from the package root checking each `node_modules/.bin/` directory. This handles both dev mode (binary in `apps/server/node_modules/.bin/`) and npm-installed mode (binary hoisted to consumer's top-level `node_modules/.bin/`). Never use hardcoded `node_modules` paths for binary resolution.
+
 ### Build Pipeline
 
-- `pnpm build` — Turbo builds `@agentpane/web` first (`next build` → `.next/standalone`), then server (`tsc` + copies standalone to `apps/server/web/`)
+- `npm run build` — Turbo builds `@agentpane/web` first (`next build` → `.next/standalone`), then server (`tsc` + copies standalone to `apps/server/web/`)
 - `apps/server/web/` is a build artifact (gitignored), included in npm publish via `files` field
 - `bin/agentpane.js` — imports API server + forks Next.js standalone server
+- **Testing distribution:** `cd apps/server && npm pack`, then `mkdir /tmp/test && cd /tmp/test && npm install <path-to-tgz> && npx agentpane`
 
 ### Environment Variables
 

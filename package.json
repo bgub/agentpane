@@ -1,7 +1,10 @@
 {
   "name": "agentpane-repo",
   "private": true,
-  "packageManager": "pnpm@10.17.1",
+  "packageManager": "npm@10.9.3",
+  "workspaces": [
+    "apps/*"
+  ],
   "scripts": {
     "dev": "turbo run dev --ui tui",
     "build": "turbo run build",
@@ -12,12 +15,5 @@
     "@effect/language-service": "^0.77.0",
     "turbo": "^2.8.11",
     "typescript": "^5.9.3"
-  },
-  "pnpm": {
-    "onlyBuiltDependencies": [
-      "better-sqlite3",
-      "esbuild",
-      "sharp"
-    ]
   }
 }
