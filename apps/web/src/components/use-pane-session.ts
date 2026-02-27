@@ -257,6 +257,13 @@ export function usePaneSession(sessionId: string | undefined): PaneSessionState 
         dispatch({ type: "SET_AVAILABLE_COMMANDS", value: data })
       })
       .catch(() => {})
+    api.sessions.config(activeSessionId)
+      .then(async (res) => {
+        if (!res.ok) return
+        const data = await res.json() as ConfigOption[]
+        dispatch({ type: "SET_CONFIG_OPTIONS", value: data })
+      })
+      .catch(() => {})
     api.sessions.mode(activeSessionId)
       .then(async (res) => {
         if (!res.ok) return
