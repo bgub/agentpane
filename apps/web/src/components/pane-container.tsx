@@ -1,6 +1,7 @@
 import { useState, useEffect, type ReactNode, type DragEvent } from "react"
 import { Group, Panel, Separator, type Layout } from "react-resizable-panels"
 import { Columns2 } from "lucide-react"
+import { DRAG_TYPES, parseDragData } from "@/lib/constants"
 import { useSession } from "./session-provider"
 import { useLayout } from "./layout-provider"
 import { BackendOfflineScreen } from "./backend-offline-screen"
@@ -9,18 +10,21 @@ import { PaneView } from "./pane-view"
 
 export function PaneContainer() {
   const { backendStatus, showSetup } = useSession()
-  const { layout, setPaneSizes, openSessionInNewPane } = useLayout()
-  const [dragState, setDragState] = useState({ sidebarDragging: false, splitDropHover: false })
+  const { layout, setPaneSizes, openSessionInNewPane, moveTabToNewPane } = useLayout()
+  const [dragState, setDragState] = useState({ dragging: false, splitDropHover: false })
 
-  // Listen globally for sidebar drag start/end to reveal the split drop zone
+  // Listen globally for sidebar/tab drag start/end to reveal the split drop zone
   useEffect(() => {
     const handleDragStart = (e: globalThis.DragEvent) => {
-      if (e.dataTransfer?.types.includes("application/x-sidebar-session")) {
-        setDragState((prev) => ({ ...prev, sidebarDragging: true }))
+      if (
+        e.dataTransfer?.types.includes(DRAG_TYPES.sidebarSession) ||
+        e.dataTransfer?.types.includes(DRAG_TYPES.paneTab)
+      ) {
+        setDragState((prev) => ({ ...prev, dragging: true }))
       }
     }
     const handleDragEnd = () => {
-      setDragState({ sidebarDragging: false, splitDropHover: false })
+      setDragState({ dragging: false, splitDropHover: false })
     }
     document.addEventListener("dragstart", handleDragStart)
     document.addEventListener("dragend", handleDragEnd)
@@ -38,9 +42,11 @@ export function PaneContainer() {
   }
 
   const handleSplitDragOver = (e: DragEvent) => {
-    if (!e.dataTransfer.types.includes("application/x-sidebar-session")) return
+    const hasSidebar = e.dataTransfer.types.includes(DRAG_TYPES.sidebarSession)
+    const hasTab = e.dataTransfer.types.includes(DRAG_TYPES.paneTab)
+    if (!hasSidebar && !hasTab) return
     e.preventDefault()
-    e.dataTransfer.dropEffect = "copy"
+    e.dataTransfer.dropEffect = hasSidebar ? "copy" : "move"
     setDragState((prev) => ({ ...prev, splitDropHover: true }))
   }
 
@@ -48,13 +54,18 @@ export function PaneContainer() {
 
   const handleSplitDrop = (e: DragEvent) => {
     e.preventDefault()
-    setDragState({ sidebarDragging: false, splitDropHover: false })
-    const raw = e.dataTransfer.getData("application/x-sidebar-session")
-    if (!raw) return
-    try {
-      const data = JSON.parse(raw) as { sessionId: string }
-      openSessionInNewPane(data.sessionId)
-    } catch { /* ignore */ }
+    setDragState({ dragging: false, splitDropHover: false })
+    // Sidebar drag → new pane (copies session)
+    const sidebar = parseDragData<{ sessionId: string }>(e, DRAG_TYPES.sidebarSession)
+    if (sidebar) {
+      openSessionInNewPane(sidebar.sessionId)
+      return
+    }
+    // Tab drag → move tab to new pane
+    const tab = parseDragData<{ fromPaneId: string; sessionId: string }>(e, DRAG_TYPES.paneTab)
+    if (tab) {
+      moveTabToNewPane(tab.fromPaneId, tab.sessionId)
+    }
   }
 
   if (backendStatus === "offline") {
@@ -101,7 +112,7 @@ export function PaneContainer() {
   })
 
   const canSplit = layout.panes.length < 4
-  const showSplitZone = canSplit && dragState.sidebarDragging
+  const showSplitZone = canSplit && dragState.dragging
 
   return (
     <div className="flex-1 min-w-0 min-h-0 flex">

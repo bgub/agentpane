@@ -12,8 +12,10 @@ interface LayoutContextValue {
   openSessionInPane: (paneId: string, sessionId: string) => void
   closeTab: (paneId: string, sessionId: string) => void
   moveTab: (fromPaneId: string, toPaneId: string, sessionId: string) => void
+  reorderTab: (paneId: string, sessionId: string, insertBeforeIndex: number) => void
   openSessionInFocusedPane: (sessionId: string) => void
   openSessionInNewPane: (sessionId: string) => void
+  moveTabToNewPane: (fromPaneId: string, sessionId: string) => void
   setPaneSizes: (sizes: number[]) => void
 }
 
@@ -240,6 +242,56 @@ export function LayoutProvider({
     })
   }
 
+  const reorderTab = (paneId: string, sessionId: string, insertBeforeIndex: number) => {
+    setLayout((prev) => {
+      const pane = prev.panes.find((p) => p.id === paneId)
+      if (!pane) return prev
+      const fromIndex = pane.tabSessionIds.indexOf(sessionId)
+      if (fromIndex === -1) return prev
+      if (fromIndex === insertBeforeIndex || fromIndex + 1 === insertBeforeIndex) return prev
+      const tabs = [...pane.tabSessionIds]
+      tabs.splice(fromIndex, 1)
+      const adjustedIndex = insertBeforeIndex > fromIndex ? insertBeforeIndex - 1 : insertBeforeIndex
+      tabs.splice(adjustedIndex, 0, sessionId)
+      return {
+        ...prev,
+        panes: prev.panes.map((p) =>
+          p.id === paneId ? { ...p, tabSessionIds: tabs } : p
+        ),
+      }
+    })
+  }
+
+  const moveTabToNewPane = (fromPaneId: string, sessionId: string) => {
+    setLayout((prev) => {
+      if (prev.panes.length >= MAX_PANES) return prev
+      const fromPane = prev.panes.find((p) => p.id === fromPaneId)
+      if (!fromPane || !fromPane.tabSessionIds.includes(sessionId)) return prev
+
+      const fromRemaining = fromPane.tabSessionIds.filter((id) => id !== sessionId)
+      let panes: Pane[]
+      if (fromRemaining.length === 0) {
+        panes = prev.panes.filter((p) => p.id !== fromPaneId)
+      } else {
+        panes = prev.panes.map((p) => {
+          if (p.id !== fromPaneId) return p
+          const activeTab = fromRemaining.includes(p.activeTabSessionId)
+            ? p.activeTabSessionId
+            : fromRemaining[0] ?? ""
+          return { ...p, tabSessionIds: fromRemaining, activeTabSessionId: activeTab }
+        })
+      }
+
+      const newId = newPaneId()
+      panes.push({
+        id: newId,
+        tabSessionIds: [sessionId],
+        activeTabSessionId: sessionId,
+      })
+      return { panes, focusedPaneId: newId, paneSizes: evenSizes(panes.length) }
+    })
+  }
+
   const openSessionInFocusedPane = (sessionId: string) => {
     openSessionInPane(layout.focusedPaneId, sessionId)
   }
@@ -273,8 +325,10 @@ export function LayoutProvider({
     openSessionInPane,
     closeTab,
     moveTab,
+    reorderTab,
     openSessionInFocusedPane,
     openSessionInNewPane,
+    moveTabToNewPane,
     setPaneSizes,
   }
 

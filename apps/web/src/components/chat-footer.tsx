@@ -254,7 +254,7 @@ export function ChatFooter({ sessionId, active, prompting, connecting, connected
           onChange={(e) => handleInputChange(e.target.value)}
           onKeyDown={handleKeyDown}
           onPaste={handlePaste}
-          disabled={!active || prompting || connecting}
+          disabled={!active || connecting}
           rows={1}
           className="flex-1 resize-none bg-transparent text-sm text-[var(--t-bright)] outline-none placeholder:text-[var(--t-dim)] disabled:opacity-40"
           style={{ caretColor: 'var(--t-accent)' }}
