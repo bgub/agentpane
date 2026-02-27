@@ -11,6 +11,15 @@
   --sl-color-accent-high: #053d38;
 }
 
+.hero .tagline code {
+  padding: 0.15em 0.4em;
+  border-radius: 6px;
+  background: var(--sl-color-accent-low);
+  border: 1px solid var(--sl-color-accent);
+  color: var(--sl-color-accent-high);
+  font-size: inherit;
+}
+
 .hero-screenshot {
   width: 100%;
   max-width: 960px;
