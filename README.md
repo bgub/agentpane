@@ -1,36 +1,55 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# AgentPane
 
-## Getting Started
+Web UI for AI coding agents. Runs locally — no deployment needed.
 
-First, run the development server:
+![AgentPane](apps/docs/src/assets/hero.png)
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+## Quick Start
+
+```sh
+npx agentpane
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+This starts an API server on port 3456 and a web frontend on port 6767. Open [localhost:6767](http://localhost:6767) in your browser.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Features
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+- **Multi-pane layout** — Up to 4 resizable panes with tabs, drag-and-drop sessions
+- **Agent Client Protocol (ACP)** — JSON-RPC 2.0 over stdio for agent communication
+- **Multiple agents** — Claude Code and Codex support out of the box
+- **Streaming** — Real-time SSE with reconnect-safe replay
+- **Persistent history** — SQLite-backed sessions, turns, and message blocks
+- **Slash commands** — Agent-provided commands with autocomplete
 
-## Learn More
+## Requirements
 
-To learn more about Next.js, take a look at the following resources:
+- Node.js >= 22
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## Development
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+```sh
+git clone https://github.com/bgub/agentpane.git
+cd agentpane
+pnpm install
+pnpm dev
+```
 
-## Deploy on Vercel
+`pnpm dev` starts both the Next.js dev server (port 6767) and the Hono API server (port 3456) via Turborepo. The frontend rewrites `/api` requests to the backend.
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+## Architecture
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+Turborepo + pnpm workspaces monorepo with three apps:
+
+| App | Path | Description |
+|---|---|---|
+| **Server** | `apps/server` | Hono + Effect.ts API server, published to npm as `agentpane` |
+| **Web** | `apps/web` | Next.js 16, React 19, Tailwind CSS 4, TanStack React Query |
+| **Docs** | `apps/docs` | Astro + Starlight documentation site |
+
+The server spawns agent subprocesses and communicates via ACP. The frontend connects to the server over same-origin HTTP + SSE. Data is stored in SQLite at `~/.agentpane/agentpane.db`.
+
+See [CLAUDE.md](./CLAUDE.md) for detailed architecture, API routes, key patterns, and contributor guidelines.
+
+## License
+
+MIT

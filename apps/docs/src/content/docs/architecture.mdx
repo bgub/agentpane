@@ -1,38 +1,45 @@
 ---
 title: Architecture
-description: How AgentPane is structured — unified server, Effect.ts backend, Vite SPA frontend.
+description: How AgentPane is structured — two-process server, Effect.ts backend, Next.js frontend.
 ---
 
 ## Overview
 
-AgentPane is a **Turborepo monorepo** with two main packages:
+AgentPane is a **Turborepo monorepo** with three packages:
 
-- **`apps/server`** — Hono HTTP server with Effect.ts service layers
-- **`apps/web`** — Vite SPA with React 19
+- **`apps/server`** — Hono HTTP server with Effect.ts service layers (port 3456)
+- **`apps/web`** — Next.js 16 App Router with React 19 (port 6767)
+- **`apps/docs`** — Astro + Starlight documentation site
 
-A single process serves both the API and the pre-built frontend on port 3456. No separate frontend deployment — everything runs locally.
+`npx agentpane` starts two processes: the Hono API server on port 3456 and a Next.js standalone server on port 6767. In development, the Next.js dev server rewrites `/api/*` to the API server. No auth or CORS — everything is same-origin.
 
-## Unified Server
+## Two-Process Server
 
 ```
-┌─────────────────────────────────────┐
-│          Node.js (port 3456)        │
-│                                     │
-│  ┌───────────┐  ┌────────────────┐  │
-│  │  /api/*   │  │  Static files  │  │
-│  │  (Hono)   │  │  (Vite build)  │  │
-│  └─────┬─────┘  └────────────────┘  │
-│        │                            │
-│  ┌─────┴─────────────────────────┐  │
-│  │     Effect.ts Services        │  │
-│  │  SessionRepo · AcpClient      │  │
-│  └─────┬─────────────────────────┘  │
-│        │                            │
-│  ┌─────┴─────┐  ┌───────────────┐  │
-│  │  SQLite   │  │ Agent (stdio)  │  │
-│  │  (WAL)    │  │  ACP/JSON-RPC  │  │
-│  └───────────┘  └───────────────┘  │
-└─────────────────────────────────────┘
+┌──────────────────────┐   ┌──────────────────────┐
+│  Next.js (port 6767) │   │   Hono (port 3456)   │
+│                      │   │                      │
+│  App Router UI       │──▶│  /api/* routes        │
+│  (rewrites /api/*)   │   │                      │
+└──────────────────────┘   │  Effect.ts Services   │
+                           │  ┌──────────────────┐ │
+                           │  │ ConnectionManager │ │
+                           │  │ PromptEngine      │ │
+                           │  │ EventHub          │ │
+                           │  │ WriteQueue        │ │
+                           │  │ SessionRepo       │ │
+                           │  └────────┬─────────┘ │
+                           │           │           │
+                           │  ┌────────┴────┐      │
+                           │  │   SQLite    │      │
+                           │  │   (WAL)     │      │
+                           │  └─────────────┘      │
+                           │                      │
+                           │  ┌────────────────┐   │
+                           │  │ Agent (stdio)  │   │
+                           │  │ ACP/JSON-RPC   │   │
+                           │  └────────────────┘   │
+                           └──────────────────────┘
 ```
 
 ## Backend Services
@@ -41,8 +48,12 @@ The backend uses **Effect.ts** for dependency injection and error handling. Serv
 
 | Service | Responsibility |
 |---------|---------------|
+| **AcpClient** | Facade composing ConnectionManager, EventHub, PromptEngine, and WriteQueue |
+| **ConnectionManager** | Agent subprocess lifecycle, ACP connection setup, session load/resume |
+| **PromptEngine** | Prompt execution orchestration, turn persistence, token tracking |
+| **EventHub** | Session-level event broadcaster management with idle cleanup |
+| **WriteQueue** | Batched DB writes (50ms debounce per session, crash recovery) |
 | **SessionRepo** | CRUD for sessions, turns, and message blocks in SQLite |
-| **AcpClient** | Manages agent subprocesses, ACP connections, and session-level event broadcasters |
 | **SqliteLive** | Database connection, migrations, WAL mode, foreign keys |
 
 ### Error Handling
@@ -51,11 +62,13 @@ Domain errors use `Schema.TaggedError` with `httpStatus` and `httpMessage` gette
 
 ## Frontend
 
-The frontend is a **Vite SPA** — pure UI with no backend dependencies. It communicates with the API via plain `fetch` using relative URLs (same-origin, no auth tokens).
+The frontend is a **Next.js 16 App Router** application — pure UI with no backend dependencies. It communicates with the API via plain `fetch` using relative URLs (same-origin, no auth tokens).
 
 Key patterns:
+- **React Query** — All server state with SSR prefetch and dehydration, query invalidation on SSE events
 - **Always-on EventSource** — SSE connection stays open regardless of agent connection state
 - **React Compiler** — Automatic memoization, no manual `useMemo`/`useCallback`
+- **Streaming markdown** — Via Streamdown with Shiki syntax highlighting
 
 ## Agent Communication
 
@@ -69,7 +82,7 @@ Session-level broadcasters survive agent disconnects, delivering connection stat
 
 ## Database
 
-SQLite with WAL mode, stored at `data/agentpane.db` in the project root. Three tables:
+SQLite with WAL mode, stored at `~/.agentpane/agentpane.db` (configurable via `AGENTPANE_DATA_DIR`). Three tables:
 
 - **sessions** — id, name, working directory, agent type, timestamps
 - **turns** — id, session reference, role (user/assistant), stop reason
